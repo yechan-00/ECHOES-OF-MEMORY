@@ -1,36 +1,30 @@
 // ECHOES OF MEMORY
-// 1단계: 시작 화면만 표시한다.
-// 카메라, 파티클, 움직임 감지, 잔상, 네온 효과는 이 단계에서 구현하지 않는다.
+// 2단계: 카메라 입력.
+// 파티클, 움직임 감지, 잔상, 네온은 아직 만들지 않는다.
+// captureEvent()는 사용하지 않는다. 프레임은 draw()에서 한 번만 읽는다.
 
-PFont titleFont;
-PFont subtitleFont;
-PFont statusFont;
+CameraManager camera;
 
 void setup() {
   size(1280, 720);
   pixelDensity(displayDensity());
+  frameRate(60);
   surface.setTitle("ECHOES OF MEMORY");
 
-  titleFont = createFont("SansSerif", 54);
-  subtitleFont = createFont("SansSerif", 18);
-  statusFont = createFont("Monospaced", 13);
-
-  textAlign(CENTER, CENTER);
-  noStroke();
+  camera = new CameraManager(this);
+  camera.begin();
 }
 
 void draw() {
   background(#080D18);
+  camera.update();
+  // 이후 단계에서는 이 위치에서 camera.frame()과 camera.pixelColor()를
+  // ParticleSystem과 MotionDetector가 함께 사용한다.
+  camera.drawView();
+}
 
-  fill(#F4FBFF);
-  textFont(titleFont);
-  text("ECHOES OF MEMORY", width / 2.0, height / 2.0 - 24);
-
-  fill(#B7A4FF);
-  textFont(subtitleFont);
-  text("Interactive Particle Portrait", width / 2.0, height / 2.0 + 28);
-
-  fill(#7F8DA3);
-  textFont(statusFont);
-  text("SYSTEM INITIALIZED", width / 2.0, height - 40);
+void keyPressed() {
+  if (camera != null && key != CODED) {
+    camera.handleKey(key);
+  }
 }
