@@ -55,6 +55,16 @@ MacBook 카메라로 관람객의 모습을 실시간 촬영하고, 그 형상�
 | `R` | 목록을 다시 검색하고 연결을 다시 시도 |
 | `M` | 좌우 반전 켜기 / 끄기 |
 | `H` | 도움말과 프레임 정보 표시 |
+| `V` | 점 찍기 화면 / 원본 카메라 화면 전환 |
+| `X` | 찍은 점 지우기 |
+| `S` | 점 캔버스를 `EchoesOfMemory/captures/`에 PNG로 저장 |
+
+## 무작위 점 찍기
+
+`DotPainter`는 매 프레임 카메라 영상에서 무작위 위치 400곳의 색을 읽어, 그 자리에 점을 찍는다. 점은 지워지지 않고 쌓이므로 시간이 지날수록 모습이 점묘화처럼 드러나고, 움직인 흔적도 남는다.
+
+- 마우스를 왼쪽에 두면 점이 작아(1px) 세밀하게, 오른쪽에 두면 커져(50px) 거칠게 찍힌다.
+- 카메라 전환(`C`), 재연결(`R`), 반전(`M`)을 하면 점 위치가 맞지 않으므로 캔버스를 지운다.
 
 대문자와 소문자 모두 동작한다. 화면 하단에도 `C: Camera`, `R: Retry`, `M: Mirror`, `H: Help`가 표시된다. 장치 번호와 제조사 이름은 코드에 고정되어 있지 않다.
 
@@ -94,6 +104,7 @@ ECHOES-OF-MEMORY/
 ├── EchoesOfMemory/
 │   ├── EchoesOfMemory.pde
 │   ├── CameraManager.pde
+│   ├── DotPainter.pde
 │   ├── Particle.pde
 │   ├── ParticleSystem.pde
 │   ├── MotionDetector.pde

@@ -58,3 +58,5 @@ application.linux-armv6hf/
 out/
 build/
 *.class
+
+EchoesOfMemory/captures/

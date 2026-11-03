@@ -59,6 +59,8 @@ class CameraManager {
 
   String errorLine = "";
   String statusNote = "";
+  String extraStatus = "";
+  String extraShortcuts = "";
 
   PFont titleFont;
   PFont subtitleFont;
@@ -131,6 +133,15 @@ class CameraManager {
   void drawView() {
     if ((state == STATE_LIVE || state == STATE_INTERRUPTED) && isReady()) {
       drawFrame();
+      drawLiveChrome();
+      return;
+    }
+    drawMessage();
+  }
+
+  // 영상 없이 상태 표시줄, 단축키, 연결 안내만 그린다.
+  void drawChrome() {
+    if ((state == STATE_LIVE || state == STATE_INTERRUPTED) && isReady()) {
       drawLiveChrome();
       return;
     }
@@ -693,6 +704,7 @@ class CameraManager {
     }
 
     String status = activeLabel() + "  " + frameWidth() + "x" + frameHeight();
+    if (extraStatus.length() > 0) status += "  " + extraStatus;
     if (statusNote.length() > 0) status += "  " + statusNote;
     float statusY = state == STATE_INTERRUPTED ? 52 : 28;
     app.textFont(bodyFont);
@@ -794,7 +806,9 @@ class CameraManager {
   }
 
   String shortcutLine() {
-    return "C: Camera    R: Retry    M: Mirror    H: Help";
+    String line = "C: Camera    R: Retry    M: Mirror    H: Help";
+    if (extraShortcuts.length() > 0) line += "    " + extraShortcuts;
+    return line;
   }
 
   String activeLabel() {
