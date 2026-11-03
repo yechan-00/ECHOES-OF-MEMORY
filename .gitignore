@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+*.lnk
+
+# IDE temporary files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.code-workspace
+.project
+.classpath
+.settings/
+.metadata/
+.history/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.sublime-workspace
+*.sublime-project
+.cursor/
+
+# Processing export output
+application.macosx/
+application.windows32/
+application.windows64/
+application.linux32/
+application.linux64/
+application.linux-arm64/
+application.linux-armv6hf/
+out/
+build/
+*.class
