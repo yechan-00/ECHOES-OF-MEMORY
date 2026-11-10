@@ -301,7 +301,10 @@ class CameraManager {
 
     try {
       opened = openCapture(device);
-      opened.start();
+      // Capture.start()는 pipeline.getState()에서 장치가 재생될 때까지 기다린다.
+      // 그 대기 동안 draw()가 끝나지 않으면 전체화면은 기본 회색으로 남는다.
+      if (opened.pipeline != null) opened.pipeline.play();
+      else opened.start();
       capture = opened;
     } catch (Throwable problem) {
       if (opened != null) {
