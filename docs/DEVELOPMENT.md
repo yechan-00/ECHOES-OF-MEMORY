@@ -270,14 +270,14 @@ diff -rq --exclude=.git . ../ECHOES-OF-MEMORY-remote
 
 ## 테스트 체크리스트
 
-완료한 항목만 체크한다. 지금은 모두 미검증이다.
+완료한 항목만 체크한다. 2026-11-10에 Windows 항목을 확인했다. macOS 항목은 아직 미검증이다.
 
 환경:
 
-- [ ] 양쪽 Processing 4 버전이 같다.
-- [ ] 모드가 Java다.
-- [ ] 양쪽 Video 라이브러리 버전이 같다.
-- [ ] 스케치 폴더 이름이 `EchoesOfMemory`다.
+- [x] 양쪽 Processing 4 버전이 같다. (Mac 4.5.7, Windows 4.5.7)
+- [x] 모드가 Java다.
+- [ ] 양쪽 Video 라이브러리 버전이 같다. (Windows 2.2.2, Mac 미확인)
+- [x] 스케치 폴더 이름이 `EchoesOfMemory`다.
 
 macOS:
 
@@ -291,17 +291,24 @@ macOS:
 
 Windows:
 
-- [ ] 카메라와 데스크톱 앱 권한이 켜져 있다.
-- [ ] 콘솔에 내장 웹캠이 출력된다.
-- [ ] 영상이 비율을 유지한 채 나온다.
-- [ ] `C`, `R`, `M`, `H`가 동작한다.
+- [x] 카메라와 데스크톱 앱 권한이 켜져 있다.
+- [x] 콘솔에 내장 웹캠이 출력된다.
+- [x] 영상이 비율을 유지한 채 나온다.
+- [x] `C`, `R`, `M`, `H`가 동작한다.
 - [ ] 카메라가 없을 때 스케치가 종료되지 않고 안내가 남는다.
+- [x] 움직임 감지: `G`로 감지 칸과 중심 표시, `[` `]`로 임계값 조절이 동작한다.
 
-아직 구현하지 않은 항목은 테스트하지 않는다. 파티클, 움직임 감지, 잔상, 네온이다.
+아직 구현하지 않은 항목은 테스트하지 않는다. 파티클, 잔상, 네온이다.
 
 | 날짜 | 운영체제 | Processing | Video | 확인한 항목 | 결과 |
 | --- | --- | --- | --- | --- | --- |
-|  |  |  |  |  |  |
+| 2026-11-10 | Windows 11 Home | 4.5.7 | 2.2.2 | 카메라 연결·표시, `C` `R` `M` `H`, 움직임 감지 `G` `[` `]` | 동작함. 카메라 `Hy-HD(7501)-Camera` 640×480 @ 30. 참고 사항 3가지는 아래 |
+
+Windows 실행 중 발견한 사항(2026-11-10):
+
+- `Capture.getCapabilities()`가 이 카메라에서 `StringIndexOutOfBoundsException`을 낸다. `CameraManager`가 예외를 받아 640×480 @ 30 기본 요청으로 넘어가므로 실행에는 지장이 없다.
+- 화면 배율 125%에서 `pixelDensity(displayDensity())` 때문에 1280×720 창이 약 1600×900으로 커져 화면 밖으로 잘렸다. `integration/demo`에서 `fullScreen()`으로 바뀌어 더는 해당하지 않는다.
+- 종료 시 `IllegalAccessException`이 난다. `CameraManager`가 `public class`가 아니라서 `registerMethod("dispose", this)`로 등록한 `dispose()`를 Processing이 호출하지 못한다.
 
 ## 담당 파일
 

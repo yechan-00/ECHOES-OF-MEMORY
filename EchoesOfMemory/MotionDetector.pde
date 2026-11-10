@@ -18,6 +18,13 @@
 //   grid       : 칸별 움직임 강도 0~1. 인덱스는 col + row * cols.
 //   total      : 영상이 놓인 칸들의 평균 강도 0~1.
 //   center     : 이번 카메라 프레임에서 감지된 값으로 구한 움직임 중심(화면 좌표). 움직임이 없으면 null.
+//   velocity   : center가 카메라 프레임 하나 동안 이동한 양(화면 px). 평활화되어 있고, 움직임이 멈추면 0으로 줄어든다.
+//                각도가 움직이는 방향, 길이(speed())가 빠르기다. 화면 전체에서 하나의 방향만 나온다.
+//
+// 방향 계산:
+//   새 카메라 프레임마다 (이번 center − 이전 center)를 구해 DIR_SMOOTHING 비율로 velocity에 섞는다.
+//   center가 끊겼다 다시 생긴 첫 프레임은 순간이동처럼 보이므로 빼지 않는다.
+//   프레임 차분은 떠난 자리와 도착한 자리를 함께 잡으므로 center는 실제 위치보다 조금 뒤처진다. 방향은 맞다.
 //
 // 좌표:
 //   grid와 center는 모두 현재 화면 좌표다. 거울 반전과 Fit/Fill은
@@ -35,6 +42,9 @@ class MotionDetector {
   static final float THRESHOLD_STEP   = 5;      // [ ] 키로 임계값을 바꾸는 폭
   static final float THRESHOLD_MIN    = 5;
   static final float THRESHOLD_MAX    = 120;
+  static final float DIR_SMOOTHING    = 0.3;    // 새 이동량을 velocity에 섞는 비율. 클수록 빠르게 반응하고 많이 떨린다
+  static final float DIR_MIN_SPEED    = 1.5;    // 디버그 화살표를 그리는 최소 속도 (px/카메라 프레임)
+  static final float DIR_ARROW_SCALE  = 6;      // 디버그 화살표 길이 배율
 
   static final int COLOR_LOW   = 0xFF38E8D5;    // 약한 움직임 (청록)
   static final int COLOR_HIGH  = 0xFFA78BFA;    // 강한 움직임 (보라)
@@ -49,6 +59,7 @@ class MotionDetector {
   float[] grid;
   float total = 0;
   PVector center = null;
+  PVector velocity = new PVector();
 
   // ── 내부 상태 ──
   float diffThreshold = DIFF_THRESHOLD;
@@ -63,6 +74,10 @@ class MotionDetector {
   float freshSum = 0;
   float freshX = 0;
   float freshY = 0;
+
+  // 직전 카메라 프레임의 center (방향 계산용)
+  PVector prevCenter = new PVector();
+  boolean hasPrevCenter = false;
 
   // 샘플 위치의 화면 → 원본 좌표 변환표. 새 프레임마다 다시 만든다 (-1이면 영상 밖).
   int[] sampleFrameX;
@@ -135,6 +150,11 @@ class MotionDetector {
     return grid[col + row * cols];
   }
 
+  // velocity의 길이 (px/카메라 프레임).
+  float speed() {
+    return velocity.mag();
+  }
+
   // 카메라 전환·재검색처럼 이전 프레임과 비교하면 안 될 때 호출한다.
   void reset() {
     hasPrev = false;
@@ -144,6 +164,8 @@ class MotionDetector {
     }
     total = 0;
     center = null;
+    velocity.set(0, 0);
+    hasPrevCenter = false;
     freshSum = 0;
     freshX = 0;
     freshY = 0;
@@ -241,6 +263,7 @@ class MotionDetector {
       }
     }
     updateCenter();
+    updateDirection();
   }
 
   // 새로 감지된 값만으로 중심을 구한다. 새 카메라 프레임이 없을 때는 직전 중심을 유지한다.
@@ -256,6 +279,26 @@ class MotionDetector {
       center = new PVector(freshX / freshSum, freshY / freshSum);
     } else {
       center.set(freshX / freshSum, freshY / freshSum);
+    }
+  }
+
+  // center의 이동량을 velocity에 섞는다. 새 카메라 프레임마다 updateCenter() 다음에 한 번 호출된다.
+  void updateDirection() {
+    if (center != null && hasPrevCenter) {
+      float dx = center.x - prevCenter.x;
+      float dy = center.y - prevCenter.y;
+      velocity.x = app.lerp(velocity.x, dx, DIR_SMOOTHING);
+      velocity.y = app.lerp(velocity.y, dy, DIR_SMOOTHING);
+    } else {
+      // 움직임이 없거나 center가 막 다시 생긴 프레임: 새 이동량 없이 0 쪽으로 줄인다
+      velocity.mult(1 - DIR_SMOOTHING);
+    }
+
+    if (center != null) {
+      prevCenter.set(center);
+      hasPrevCenter = true;
+    } else {
+      hasPrevCenter = false;
     }
   }
 
@@ -307,13 +350,27 @@ class MotionDetector {
       app.ellipse(center.x, center.y, 28, 28);
       app.line(center.x - 20, center.y, center.x + 20, center.y);
       app.line(center.x, center.y - 20, center.x, center.y + 20);
+
+      // 움직이는 방향 화살표
+      if (speed() >= DIR_MIN_SPEED) {
+        float tipX = center.x + velocity.x * DIR_ARROW_SCALE;
+        float tipY = center.y + velocity.y * DIR_ARROW_SCALE;
+        float angle = app.atan2(velocity.y, velocity.x);
+        app.stroke(COLOR_HIGH);
+        app.strokeWeight(3);
+        app.line(center.x, center.y, tipX, tipY);
+        app.line(tipX, tipY, tipX - 14 * app.cos(angle - 0.5), tipY - 14 * app.sin(angle - 0.5));
+        app.line(tipX, tipY, tipX - 14 * app.cos(angle + 0.5), tipY - 14 * app.sin(angle + 0.5));
+      }
     }
 
     String line1 = "MOTION  total " + app.nf(total, 1, 3)
-      + "   center " + (center == null ? "-" : (int) center.x + "," + (int) center.y);
+      + "   center " + (center == null ? "-" : (int) center.x + "," + (int) center.y)
+      + "   velocity " + app.nf(velocity.x, 1, 1) + "," + app.nf(velocity.y, 1, 1)
+      + "   speed " + app.nf(speed(), 1, 1);
     String line2 = "grid " + cols + "x" + rows + "   cell " + CELL_SIZE + "px   threshold "
       + (int) diffThreshold + "   [ ] adjust   G hide";
-    float panelW = 540;
+    float panelW = 700;
     float panelH = 46;
     float panelX = 16;
     float panelY = app.height - panelH - 16;

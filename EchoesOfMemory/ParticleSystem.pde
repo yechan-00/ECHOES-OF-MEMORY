@@ -29,6 +29,16 @@ class ParticleSystem {
   static final float MOTION_FORCE = 2.8;
   static final float MOTION_RADIUS = 48;
   static final float MOTION_TWIST = 0.35;
+  // 움직이는 방향으로 쓸어내는 힘. motion.speed()가 SWEEP_MIN_SPEED 이상일 때만 걸린다.
+  // 전체 화면 실측(2026-11-10, Windows): 손을 흔들 때 speed 평균 약 18, 크게 휘두르면 60~110.
+  static final float MOTION_SWEEP = 5.0;
+  static final float MOTION_SWEEP_MIN_SPEED = 4;     // px/카메라 프레임
+  static final float MOTION_SWEEP_FULL_SPEED = 25;   // 이 속도에서 쓸어내는 힘이 최대가 된다
+  static final float MOTION_RADIAL_KEEP = 0.6;       // 쓸어낼 때 바깥으로 미는 힘을 남기는 비율
+  // 움직임 힘에 맞은 입자는 스프링이 풀려 밀려난 자리에 머물다 돌아온다.
+  static final float RELEASE_SECONDS = 1.6;   // release가 1에서 0으로 돌아오는 시간
+  static final float RELEASE_GAIN = 2.5;      // 감쇠(falloff)에 곱한다. 국소 중심 가까이는 바로 1이 된다
+  static final float RELEASE_CURVE = 3;       // 스프링 = (1 - release)^CURVE. 클수록 오래 비어 있다
   static final float PRESENCE_RESPONSE = 0.18;
   static final float ACTIVATION_RESPONSE = 0.22;
   static final float MOTION_TINT_RESPONSE = 0.16;
@@ -86,6 +96,11 @@ class ParticleSystem {
   int[] motionTouch = new int[0];
   float motionAddX = 0;
   float motionAddY = 0;
+  float motionHit = 0;        // accumulateMotion이 계산한 감쇠. release에 쓴다
+  // prepareMotion에서 motion.velocity로 정한다. 모든 칸에 같은 방향으로 걸린다.
+  float sweepX = 0;
+  float sweepY = 0;
+  float radialScale = 1;
 
   ParticleSystem(PApplet app) {
     this.app = app;
@@ -148,6 +163,7 @@ class ParticleSystem {
   void prepareMotion(MotionDetector motion) {
     clearMotionField();
     if (motion == null || motion.grid == null || motion.cols < 1 || motion.rows < 1) return;
+    prepareSweep(motion);
     int cols = motion.cols;
     int rows = motion.rows;
     int cells = cols * rows;
@@ -200,6 +216,20 @@ class ParticleSystem {
       }
     }
     motionHot = motionTouched > 0;
+  }
+
+  // 빠를수록 바깥으로 퍼지는 힘을 줄이고 움직이는 방향으로 쓸어낸다.
+  void prepareSweep(MotionDetector motion) {
+    sweepX = 0;
+    sweepY = 0;
+    radialScale = 1;
+    float speed = motion.speed();
+    if (speed < MOTION_SWEEP_MIN_SPEED) return;
+    float amount = (speed - MOTION_SWEEP_MIN_SPEED) / (MOTION_SWEEP_FULL_SPEED - MOTION_SWEEP_MIN_SPEED);
+    if (amount > 1) amount = 1;
+    sweepX = motion.velocity.x / speed * MOTION_SWEEP * amount;
+    sweepY = motion.velocity.y / speed * MOTION_SWEEP * amount;
+    radialScale = 1f - (1f - MOTION_RADIAL_KEEP) * amount;
   }
 
   // 다음 update() 한 번만 적용된다. 움직임 감지 쪽은 화면 좌표와 세기만 넘기면 된다.
@@ -322,8 +352,11 @@ class ParticleSystem {
         continue;
       }
 
-      float ax = (particle.home.x - particle.position.x) * SPRING_STRENGTH;
-      float ay = (particle.home.y - particle.position.y) * SPRING_STRENGTH;
+      float releaseDecay = step / (60f * RELEASE_SECONDS);
+      particle.release = particle.release > releaseDecay ? particle.release - releaseDecay : 0;
+      float spring = SPRING_STRENGTH * (float) Math.pow(1f - particle.release, RELEASE_CURVE);
+      float ax = (particle.home.x - particle.position.x) * spring;
+      float ay = (particle.home.y - particle.position.y) * spring;
 
       if (scatterHeld && (target > 0.03f || particle.presence > 0.03f)) {
         float outwardX = particle.home.x - centerX;
@@ -362,6 +395,9 @@ class ParticleSystem {
         accumulateMotion(particle);
         ax += motionAddX;
         ay += motionAddY;
+        float hit = motionHit * RELEASE_GAIN;
+        if (hit > 1) hit = 1;
+        if (hit > particle.release) particle.release = hit;
       }
 
       if (forceCount > 0 && particle.presence > 0.02f) {
@@ -489,10 +525,11 @@ class ParticleSystem {
     motionTouched = 0;
   }
 
-  // home이 속한 칸의 국소 중심에서 바깥으로 민다. 방향 벡터는 추정하지 않는다.
+  // home이 속한 칸의 국소 중심에서 바깥으로 밀고, motion.velocity 방향으로 쓸어낸다.
   void accumulateMotion(Particle particle) {
     motionAddX = 0;
     motionAddY = 0;
+    motionHit = 0;
     float cell = MotionDetector.CELL_SIZE;
     int col = (int) (particle.home.x / cell);
     int row = (int) (particle.home.y / cell);
@@ -521,9 +558,10 @@ class ParticleSystem {
     float falloff = 1f - dist / MOTION_RADIUS;
     falloff *= falloff;
     float inv = 1f / (float) Math.sqrt(mag2);
-    float power = MOTION_FORCE * peak * falloff * (0.85f + 0.3f * particle.sizeBias);
-    motionAddX = rx * inv * power;
-    motionAddY = ry * inv * power;
+    float power = MOTION_FORCE * peak * falloff * (0.85f + 0.3f * particle.sizeBias) * radialScale;
+    motionAddX = rx * inv * power + sweepX * peak * falloff;
+    motionAddY = ry * inv * power + sweepY * peak * falloff;
+    motionHit = falloff;
   }
 
   float motionLevel(Particle particle) {

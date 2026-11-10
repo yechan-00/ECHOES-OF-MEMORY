@@ -23,6 +23,8 @@ class Particle {
   float fieldRank = 0;
   float activation = 0;
   float motionTint = 0;
+  // 움직임 힘에 맞으면 1에 가까워지고 시간이 지나면 0으로 돌아온다. 클수록 스프링이 약해진다.
+  float release = 0;
   int ambientInk = 0xFF16343A;
   boolean accent = false;
   boolean anchored = false;
@@ -44,6 +46,7 @@ class Particle {
     presence = 0;
     activation = 0;
     motionTint = 0;
+    release = 0;
     speedSq = 0;
     anchored = false;
     visible = false;
