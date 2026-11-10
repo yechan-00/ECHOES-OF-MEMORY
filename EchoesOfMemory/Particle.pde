@@ -20,6 +20,10 @@ class Particle {
   float sizeBias = 1;
   float presence = 0;
   float speedSq = 0;
+  float fieldRank = 0;
+  float activation = 0;
+  float motionTint = 0;
+  int ambientInk = 0xFF16343A;
   boolean accent = false;
   boolean anchored = false;
   boolean visible = false;
@@ -32,7 +36,14 @@ class Particle {
     phase = unitHash(index * 47 + 11) * 6.2831855;
     sizeBias = 0.55 + unitHash(index * 31 + 9) * 0.45;
     accent = unitHash(index * 17 + 3) > 0.9;
+    fieldRank = unitHash(index * 101 + 7);
+    int tone = (int) (unitHash(index * 67 + 19) * 3);
+    if (tone <= 0) ambientInk = 0xFF142033;
+    else if (tone == 1) ambientInk = 0xFF16343A;
+    else ambientInk = 0xFF1C2A48;
     presence = 0;
+    activation = 0;
+    motionTint = 0;
     speedSq = 0;
     anchored = false;
     visible = false;
@@ -58,14 +69,28 @@ class Particle {
   void hide() {
     visible = false;
     presence = 0;
+    activation = 0;
   }
 
   void approachPresence(float target, float blend) {
+    presence = approach(presence, target, blend);
+  }
+
+  void approachActivation(float target, float blend) {
+    activation = approach(activation, target, blend);
+  }
+
+  void approachMotion(float target, float blend) {
+    motionTint = approach(motionTint, target, blend);
+  }
+
+  float approach(float current, float target, float blend) {
     if (blend < 0) blend = 0;
     if (blend > 1) blend = 1;
-    presence += (target - presence) * blend;
-    if (presence < 0) presence = 0;
-    if (presence > 1) presence = 1;
+    current += (target - current) * blend;
+    if (current < 0) return 0;
+    if (current > 1) return 1;
+    return current;
   }
 
   void stepPhysics(float step, float damp, float ax, float ay, float maxSpeed, float minX, float minY, float maxX, float maxY) {
@@ -111,17 +136,45 @@ class Particle {
     position.y = py;
   }
 
-  void draw(PApplet app, float seconds, float jitterSpan) {
+  void draw(PApplet app, float seconds, float jitterSpan, float ambientKeep, float ambientAlpha, float ambientSize, float ambientFloat) {
+    float glow = activation;
+    if (glow < 0) glow = 0;
+    if (glow > 1) glow = 1;
+    boolean ambientSlot = fieldRank < ambientKeep;
+    if (!visible || (!ambientSlot && glow <= 0.02f)) return;
+
     float kick = speedSq * 0.0016f;
     if (kick > 0.22f) kick = 0.22f;
-    float shown = alpha * presence * (1f + kick);
-    if (shown > 255) shown = 255;
-    if (!visible || shown <= 1 || size <= 0) return;
+    float figure = alpha * (1f + kick);
+    if (figure > 255) figure = 255;
+    float shown = ambientSlot ? ambientAlpha + (figure - ambientAlpha) * glow : figure * glow;
+    if (shown <= 1) return;
+
+    float amp = ambientFloat + (ParticleSystem.FLOAT_AMPLITUDE - ambientFloat) * glow;
     float drift = seconds * ParticleSystem.FLOAT_SPEED;
-    float ox = jitterX * jitterSpan + (float) Math.sin(drift + phase) * ParticleSystem.FLOAT_AMPLITUDE;
-    float oy = jitterY * jitterSpan + (float) Math.cos(drift * 0.8 + phase) * ParticleSystem.FLOAT_AMPLITUDE;
-    app.fill(fillColor, shown);
-    app.circle(position.x + ox, position.y + oy, size);
+    float ox = jitterX * jitterSpan * glow + (float) Math.sin(drift + phase) * amp;
+    float oy = jitterY * jitterSpan * glow + (float) Math.cos(drift * 0.8f + phase) * amp;
+    int ink = mixInk(ambientInk, fillColor, glow);
+    ink = mixInk(ink, 0xFFA78BFA, motionTint * glow);
+    float dia = ambientSize + (size - ambientSize) * glow;
+    if (dia < 0.4f) return;
+    app.fill(ink, shown);
+    app.circle(position.x + ox, position.y + oy, dia);
+  }
+
+  int mixInk(int from, int to, float amount) {
+    if (amount <= 0) return from;
+    if (amount >= 1) return to;
+    int fr = (from >> 16) & 0xff;
+    int fg = (from >> 8) & 0xff;
+    int fb = from & 0xff;
+    int tr = (to >> 16) & 0xff;
+    int tg = (to >> 8) & 0xff;
+    int tb = to & 0xff;
+    int red = fr + (int) ((tr - fr) * amount);
+    int green = fg + (int) ((tg - fg) * amount);
+    int blue = fb + (int) ((tb - fb) * amount);
+    return (0xff << 24) | (red << 16) | (green << 8) | blue;
   }
 
   float unitHash(int n) {

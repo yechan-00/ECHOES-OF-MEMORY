@@ -1,7 +1,7 @@
 // ParticleSystem
 //
 // 카메라 밝기를 청록·보라 팔레트의 작은 빛 입자로 바꾼다.
-// 기준 배경이 있으면 BackgroundMask의 전경 값으로 표시 강도를 줄인다.
+// 기준 배경이 있으면 인물 영역만 밝히고, 배경은 고정된 낮은 밀도로 남긴다.
 // home으로 스프링 복원하고, SPACE와 마우스 주변에는 흩어지는 힘을 더한다.
 
 class ParticleSystem {
@@ -25,7 +25,20 @@ class ParticleSystem {
   static final float SPACE_FORCE = 5.4;
   static final float MOUSE_RADIUS = 120;
   static final float MOUSE_FORCE = 2.5;
+  static final float MOTION_MIN_INTENSITY = 0.12;
+  static final float MOTION_FORCE = 2.8;
+  static final float MOTION_RADIUS = 48;
+  static final float MOTION_TWIST = 0.35;
   static final float PRESENCE_RESPONSE = 0.18;
+  static final float ACTIVATION_RESPONSE = 0.22;
+  static final float MOTION_TINT_RESPONSE = 0.16;
+  static final float SPARSE_AMBIENT = 0.18;
+  static final float BALANCED_AMBIENT = 0.38;
+  static final float SPARSE_AMBIENT_ALPHA = 28;
+  static final float BALANCED_AMBIENT_ALPHA = 42;
+  static final float SPARSE_AMBIENT_SIZE = 1.15;
+  static final float BALANCED_AMBIENT_SIZE = 1.35;
+  static final float AMBIENT_FLOAT = 0.22;
   static final int POINTER_IDLE_MS = 140;
   static final int MAX_FORCES = 8;
 
@@ -61,6 +74,18 @@ class ParticleSystem {
   boolean scatterHeld = false;
   boolean pointerEnabled = false;
   boolean pointerHot = false;
+  boolean motionHot = false;
+  int visualPreset = 0;
+  int motionCols = 0;
+  int motionRows = 0;
+  int motionTouched = 0;
+  float[] motionWeight = new float[0];
+  float[] motionOriginX = new float[0];
+  float[] motionOriginY = new float[0];
+  float[] motionPeak = new float[0];
+  int[] motionTouch = new int[0];
+  float motionAddX = 0;
+  float motionAddY = 0;
 
   ParticleSystem(PApplet app) {
     this.app = app;
@@ -84,11 +109,97 @@ class ParticleSystem {
     pointerEnabled = enabled;
   }
 
+  void setVisualPreset(int preset) {
+    visualPreset = preset == 1 ? 1 : 0;
+    println("[VISUAL] Preset: " + visualPresetName());
+  }
+
+  String visualPresetName() {
+    return visualPreset == 1 ? "BALANCED" : "SPARSE";
+  }
+
+  float ambientKeep() {
+    return visualPreset == 1 ? BALANCED_AMBIENT : SPARSE_AMBIENT;
+  }
+
+  float ambientAlpha() {
+    return visualPreset == 1 ? BALANCED_AMBIENT_ALPHA : SPARSE_AMBIENT_ALPHA;
+  }
+
+  float ambientSize() {
+    return visualPreset == 1 ? BALANCED_AMBIENT_SIZE : SPARSE_AMBIENT_SIZE;
+  }
+
   String motionLabel() {
-    if (scatterHeld && pointerHot) return "spring + space + mouse";
-    if (scatterHeld) return "spring + space";
-    if (pointerHot) return "spring + mouse";
-    return "spring";
+    String label = "spring";
+    if (scatterHeld && pointerHot) label = "spring + space + mouse";
+    else if (scatterHeld) label = "spring + space";
+    else if (pointerHot) label = "spring + mouse";
+    if (motionHot) label += " + motion";
+    return label;
+  }
+
+  void clearMotion() {
+    motionHot = false;
+    clearMotionField();
+  }
+
+  // 칸마다 한 번만 힘을 펼치고, 파티클은 home이 속한 칸을 한 번 읽는다.
+  void prepareMotion(MotionDetector motion) {
+    clearMotionField();
+    if (motion == null || motion.grid == null || motion.cols < 1 || motion.rows < 1) return;
+    int cols = motion.cols;
+    int rows = motion.rows;
+    int cells = cols * rows;
+    if (motion.grid.length < cells) return;
+    ensureMotionBuffers(cols, rows);
+
+    float cell = MotionDetector.CELL_SIZE;
+    float radius = MOTION_RADIUS;
+    float radiusSq = radius * radius;
+    int reach = (int) Math.ceil(radius / cell);
+    if (reach < 1) reach = 1;
+    float[] source = motion.grid;
+
+    for (int row = 0; row < rows; row++) {
+      int rowIndex = row * cols;
+      float sourceY = (row + 0.5f) * cell;
+      for (int col = 0; col < cols; col++) {
+        float intensity = source[rowIndex + col];
+        if (intensity < MOTION_MIN_INTENSITY) continue;
+        float sourceX = (col + 0.5f) * cell;
+        int row0 = row - reach;
+        int row1 = row + reach;
+        int col0 = col - reach;
+        int col1 = col + reach;
+        if (row0 < 0) row0 = 0;
+        if (col0 < 0) col0 = 0;
+        if (row1 >= rows) row1 = rows - 1;
+        if (col1 >= cols) col1 = cols - 1;
+        for (int ry = row0; ry <= row1; ry++) {
+          float dy = sourceY - (ry + 0.5f) * cell;
+          int base = ry * cols;
+          for (int rx = col0; rx <= col1; rx++) {
+            float dx = sourceX - (rx + 0.5f) * cell;
+            float distSq = dx * dx + dy * dy;
+            if (distSq > radiusSq) continue;
+            float fall = 1f - (float) Math.sqrt(distSq) / radius;
+            if (fall <= 0) continue;
+            int index = base + rx;
+            if (motionWeight[index] == 0 && motionPeak[index] == 0) {
+              motionTouch[motionTouched] = index;
+              motionTouched++;
+            }
+            float weight = intensity * fall;
+            motionWeight[index] += weight;
+            motionOriginX[index] += sourceX * weight;
+            motionOriginY[index] += sourceY * weight;
+            if (intensity > motionPeak[index]) motionPeak[index] = intensity;
+          }
+        }
+      }
+    }
+    motionHot = motionTouched > 0;
   }
 
   // 다음 update() 한 번만 적용된다. 움직임 감지 쪽은 화면 좌표와 세기만 넘기면 된다.
@@ -146,6 +257,11 @@ class ParticleSystem {
     float damp = (float) Math.pow(DAMPING, step);
     float blend = PRESENCE_RESPONSE * step;
     if (blend > 1) blend = 1;
+    float actBlend = ACTIVATION_RESPONSE * step;
+    if (actBlend > 1) actBlend = 1;
+    float tintBlend = MOTION_TINT_RESPONSE * step;
+    if (tintBlend > 1) tintBlend = 1;
+    float keep = ambientKeep();
     pointerHot = pointerActive(now);
 
     float centerX = originX + scaleX * frameW * 0.5f;
@@ -157,12 +273,13 @@ class ParticleSystem {
     float minY = -48;
     float maxX = app.width + 48;
     float maxY = app.height + 48;
-    boolean pushing = scatterHeld || pointerHot || forceCount > 0;
+    boolean pushing = scatterHeld || pointerHot || forceCount > 0 || motionHot;
 
     for (int i = 0; i < count; i++) {
       Particle particle = particles[i];
       if (!camera.pixelInRange(particle.sampleX, particle.sampleY)) {
         particle.approachPresence(0, blend);
+        particle.approachActivation(0, actBlend);
         particle.visible = false;
         continue;
       }
@@ -171,7 +288,8 @@ class ParticleSystem {
       float sy = originY + (particle.sampleY + 0.5f) * scaleY;
       if (sx < 0 || sy < 0 || sx > app.width || sy > app.height) {
         particle.approachPresence(0, blend);
-        particle.visible = particle.presence > 0.025f;
+        particle.approachActivation(0, actBlend);
+        particle.visible = particle.activation > 0.03f || particle.fieldRank < keep;
         if (particle.visible) drawn++;
         continue;
       }
@@ -184,11 +302,16 @@ class ParticleSystem {
 
       particle.place(sx, sy);
       particle.approachPresence(target, blend);
+      particle.approachActivation(target, actBlend);
+      if (particle.motionTint > 0.003f || (motionHot && target > 0.03f)) {
+        float tintTarget = motionHot && target > 0.03f ? motionLevel(particle) : 0;
+        particle.approachMotion(tintTarget, tintBlend);
+      }
       boolean lively = target > 0.03f || particle.presence > 0.03f || particle.speedSq > 0.05f;
       if (pixels != null && lively) {
         applySample(pixels, frameW, frameH, particle, spacing);
       }
-      particle.visible = particle.presence > 0.025f && particle.alpha > 1f;
+      particle.visible = particle.fieldRank < keep || (particle.activation > 0.03f && particle.alpha > 1f);
 
       if (!lively) {
         if (particle.visible) drawn++;
@@ -233,6 +356,12 @@ class ParticleSystem {
           ax += dx * inv * MOUSE_FORCE * falloff;
           ay += dy * inv * MOUSE_FORCE * falloff;
         }
+      }
+
+      if (motionHot && particle.presence > 0.02f) {
+        accumulateMotion(particle);
+        ax += motionAddX;
+        ay += motionAddY;
       }
 
       if (forceCount > 0 && particle.presence > 0.02f) {
@@ -294,9 +423,12 @@ class ParticleSystem {
 
   void draw() {
     float seconds = app.millis() * 0.001;
+    float keep = ambientKeep();
+    float alpha = ambientAlpha();
+    float dia = ambientSize();
     app.noStroke();
     for (int i = 0; i < count; i++) {
-      particles[i].draw(app, seconds, jitterSpan);
+      particles[i].draw(app, seconds, jitterSpan, keep, alpha, dia, AMBIENT_FLOAT);
     }
   }
 
@@ -304,7 +436,7 @@ class ParticleSystem {
     String stats = count + " particles    " + drawn + " shown    " + (int) app.frameRate + " fps";
     String motion = motionLabel();
     String state = backgroundMask == null ? "" : backgroundMask.statusLabel();
-    String keys = "P Portrait    Space Scatter    Mouse Repel    B Background    V Mask    C R M H";
+    String keys = "P Portrait    1 Sparse    2 Balanced    Space    Mouse    G Motion    B V C R M H";
 
     app.noStroke();
     app.rectMode(PApplet.CORNER);
@@ -330,6 +462,77 @@ class ParticleSystem {
     app.fill(#A78BFA);
     app.textAlign(PApplet.RIGHT, PApplet.CENTER);
     app.text("P: Portrait", app.width - 24, 28);
+  }
+
+  void clearMotionField() {
+    for (int i = 0; i < motionTouched; i++) {
+      int index = motionTouch[i];
+      motionWeight[index] = 0;
+      motionOriginX[index] = 0;
+      motionOriginY[index] = 0;
+      motionPeak[index] = 0;
+    }
+    motionTouched = 0;
+    motionHot = false;
+  }
+
+  void ensureMotionBuffers(int cols, int rows) {
+    int needed = cols * rows;
+    if (motionWeight.length == needed && motionCols == cols && motionRows == rows) return;
+    motionWeight = new float[needed];
+    motionOriginX = new float[needed];
+    motionOriginY = new float[needed];
+    motionPeak = new float[needed];
+    motionTouch = new int[needed];
+    motionCols = cols;
+    motionRows = rows;
+    motionTouched = 0;
+  }
+
+  // home이 속한 칸의 국소 중심에서 바깥으로 민다. 방향 벡터는 추정하지 않는다.
+  void accumulateMotion(Particle particle) {
+    motionAddX = 0;
+    motionAddY = 0;
+    float cell = MotionDetector.CELL_SIZE;
+    int col = (int) (particle.home.x / cell);
+    int row = (int) (particle.home.y / cell);
+    if (col < 0 || row < 0 || col >= motionCols || row >= motionRows) return;
+    int index = col + row * motionCols;
+    float weight = motionWeight[index];
+    float peak = motionPeak[index];
+    if (weight <= 0.0001f || peak < MOTION_MIN_INTENSITY) return;
+
+    float centerX = motionOriginX[index] / weight;
+    float centerY = motionOriginY[index] / weight;
+    float dx = particle.home.x - centerX;
+    float dy = particle.home.y - centerY;
+    float twist = particle.jitterX * MOTION_TWIST;
+    float rx = dx - dy * twist;
+    float ry = dy + dx * twist;
+    float mag2 = rx * rx + ry * ry;
+    if (mag2 < 1f) {
+      rx = particle.jitterX;
+      ry = particle.jitterY;
+      mag2 = rx * rx + ry * ry;
+      if (mag2 < 0.01f) mag2 = 0.01f;
+    }
+    float dist = (float) Math.sqrt(dx * dx + dy * dy);
+    if (dist > MOTION_RADIUS) return;
+    float falloff = 1f - dist / MOTION_RADIUS;
+    falloff *= falloff;
+    float inv = 1f / (float) Math.sqrt(mag2);
+    float power = MOTION_FORCE * peak * falloff * (0.85f + 0.3f * particle.sizeBias);
+    motionAddX = rx * inv * power;
+    motionAddY = ry * inv * power;
+  }
+
+  float motionLevel(Particle particle) {
+    if (!motionHot || motionCols < 1) return 0;
+    float cell = MotionDetector.CELL_SIZE;
+    int col = (int) (particle.home.x / cell);
+    int row = (int) (particle.home.y / cell);
+    if (col < 0 || row < 0 || col >= motionCols || row >= motionRows) return 0;
+    return motionPeak[col + row * motionCols];
   }
 
   boolean ensureGrid(int frameW, int frameH) {

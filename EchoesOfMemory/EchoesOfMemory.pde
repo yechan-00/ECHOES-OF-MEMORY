@@ -18,11 +18,6 @@ boolean cameraBegun = false;
 boolean startupFrameShown = false;
 PFont startupFont;
 
-static final float MOTION_MIN_TOTAL = 0.04;
-static final float MOTION_RADIUS_MIN = 90;
-static final float MOTION_RADIUS_MAX = 210;
-static final float MOTION_FORCE_MAX = 3.6;
-
 void settings() {
   fullScreen();
   pixelDensity(displayDensity());
@@ -73,7 +68,8 @@ void draw() {
   if (showParticles) {
     particles.setScatterHeld(spaceScatter);
     particles.setPointerEnabled(!maskDebug);
-    if (ENABLE_MOTION_DETECTION && ENABLE_MOTION_FORCE) applyMotionForce();
+    if (ENABLE_MOTION_DETECTION && ENABLE_MOTION_FORCE) particles.prepareMotion(motion);
+    else particles.clearMotion();
     particles.update(camera, backgroundMask);
     if (maskDebug && backgroundMask.isReady()) backgroundMask.drawMask(camera);
     else particles.draw();
@@ -113,19 +109,17 @@ void updateMotion() {
   }
 }
 
-void applyMotionForce() {
-  if (motion == null || motion.center == null) return;
-  if (motion.total < MOTION_MIN_TOTAL) return;
-  float amount = motion.total;
-  if (amount > 1) amount = 1;
-  float radius = MOTION_RADIUS_MIN + (MOTION_RADIUS_MAX - MOTION_RADIUS_MIN) * amount;
-  float strength = MOTION_FORCE_MAX * amount;
-  particles.pushAt(motion.center.x, motion.center.y, radius, strength);
-}
-
 void keyPressed() {
   if (key == ' ' || keyCode == ' ') {
     spaceScatter = true;
+    return;
+  }
+  if (particles != null && (key == '1' || keyCode == '1')) {
+    particles.setVisualPreset(0);
+    return;
+  }
+  if (particles != null && (key == '2' || keyCode == '2')) {
+    particles.setVisualPreset(1);
     return;
   }
   if (camera == null) return;
