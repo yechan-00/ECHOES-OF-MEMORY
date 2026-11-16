@@ -88,6 +88,8 @@ Windows는 `설정 > 개인 정보 및 보안 > 카메라`에서 카메라 액�
 
 손 추적은 별도 설치가 필요 없다. 스케치 폴더의 `code/`에 ONNX Runtime jar가, `data/`에 MediaPipe Hands 모델이 들어 있고 Processing이 자동으로 불러온다. Windows x64와 Apple Silicon Mac에서 동작하며, Intel Mac은 지원하지 않는다.
 
+손동작으로 효과를 입히는 기획과 단계는 [docs/HAND_INTERACTION_PLAN.md](docs/HAND_INTERACTION_PLAN.md)에 있다.
+
 카메라 권한, 검색 방식, 실패 시 점검, 파티클 연결 방법, 손 추적 구조는 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)에 있다.
 
 ## 디렉터리
