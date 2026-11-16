@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>손 추적 테스트</title>
+<style>
+  /* 왼쪽 큰 화면(카메라와 관절), 오른쪽 좁은 패널(손별 측정값과 임계값). 좁으면 위아래로 쌓는다. */
+  :root {
+    --bg: #080D18;
+    --panel: #0F1626;
+    --line: #1E2A40;
+    --fg: #F4FBFF;
+    --muted: #8A98B3;
+    --cyan: #38E8D5;
+    --purple: #A78BFA;
+    --warn: #F5B95A;
+    --font-ui: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-ui); }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 15px; letter-spacing: 0.08em; font-weight: 600; }
+  h1 span { color: var(--muted); font-weight: 400; letter-spacing: 0; margin-left: 8px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button, .file {
+    font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover, .file:hover { border-color: var(--cyan); }
+  button:focus-visible, .file:focus-within, input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  button.primary { background: var(--cyan); color: var(--bg); border-color: var(--cyan); font-weight: 600; }
+  .file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0; min-height: calc(100% - 60px); }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .stage { position: relative; padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  canvas#view { width: 100%; height: auto; background: #000; border-radius: 8px; display: block; }
+  #empty {
+    position: absolute; inset: 20px 20px auto 20px; aspect-ratio: 4 / 3; max-width: calc(100% - 40px);
+    display: grid; place-content: center; text-align: center; gap: 8px; color: var(--muted);
+    border: 1px dashed var(--line); border-radius: 8px; padding: 24px;
+  }
+  #empty strong { color: var(--fg); font-size: 16px; }
+  .status { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .status b { color: var(--fg); font-weight: 500; }
+  .status .err { color: var(--warn); }
+  aside { border-left: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  @media (max-width: 900px) { aside { border-left: 0; border-top: 1px solid var(--line); } }
+  h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .hand { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .hand + .hand { margin-top: 10px; }
+  .hand-head { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .gesture { margin-left: auto; font-family: var(--font-ui); font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px; color: var(--bg); }
+  .meters { display: grid; grid-template-columns: 56px minmax(0, 1fr) 44px; gap: 4px 8px; align-items: center; font-size: 12px; }
+  .meters .name { color: var(--muted); }
+  .meters .val { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar i { position: absolute; inset: 0 auto 0 0; background: var(--muted); border-radius: 4px; }
+  .bar i.on { background: var(--cyan); }
+  .bar u { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--fg); }
+  .none { color: var(--muted); font-size: 13px; }
+  .tune { display: flex; flex-direction: column; gap: 12px; }
+  .tune label { display: grid; grid-template-columns: minmax(0, 1fr) 52px; gap: 2px 10px; font-size: 12px; }
+  .tune label span { color: var(--muted); }
+  .tune label output { font-family: var(--font-mono); text-align: right; }
+  .tune input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--cyan); }
+  pre { margin: 0; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.6 var(--font-mono); overflow-x: auto; white-space: pre; }
+  .row { display: flex; gap: 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ECHOES OF MEMORY<span>손 추적 · 손동작 판별 테스트</span></h1>
+  <div class="actions">
+    <button id="startCam" class="primary" type="button">카메라 시작</button>
+    <label class="file">사진으로 테스트<input id="photo" type="file" accept="image/*"></label>
+    <button id="mirror" type="button" aria-pressed="true">좌우 반전 켬</button>
+  </div>
+</header>
+<main>
+  <section class="stage">
+    <canvas id="view" width="640" height="480"></canvas>
+    <div id="empty"><strong>카메라 시작을 누르세요</strong>
+      <span>손을 카메라 1 m 안쪽에 올리면 관절과 손동작이 표시됩니다.<br>사진 파일로도 시험할 수 있습니다.</span></div>
+    <div class="status" id="status"><span>모델 <b id="sModel">불러오는 중</b></span></div>
+  </section>
+  <aside>
+    <section>
+      <h2>손</h2>
+      <div id="hands"><p class="none">잡힌 손이 없습니다.</p></div>
+    </section>
+    <section>
+      <h2>임계값</h2>
+      <div class="tune" id="tune"></div>
+    </section>
+    <section>
+      <h2>Java 상수</h2>
+      <p class="hint">조정한 값을 GestureRecognizer.pde에 그대로 붙여 넣습니다.</p>
+      <pre id="javaOut"></pre>
+      <div class="row" style="margin-top:8px"><button id="copy" type="button">복사</button><button id="resetTune" type="button">기본값으로</button></div>
+    </section>
+  </aside>
+</main>
+<video id="video" playsinline muted hidden></video>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.js"></script>
+<script>
+"use strict";
+// HandTracker.pde와 GestureRecognizer.pde를 그대로 옮긴 것이다. 상수와 계산 순서를 바꾸면 양쪽을 함께 바꾼다.
+// 모델은 저장소의 EchoesOfMemory/data/에서 읽는다. 저장소 최상위에서 정적 서버를 띄워야 한다.
+
+const MODEL_DIR = "../../EchoesOfMemory/data/";
+const PALM_MODEL = "palm_detection_mediapipe_2023feb.onnx";
+const LANDMARK_MODEL = "handpose_estimation_mediapipe_2023feb.onnx";
+
+// ── HandTracker 상수 ──
+const MAX_HANDS = 2, PALM_SIZE = 192, LANDMARK_SIZE = 224, ANCHOR_COUNT = 2016;
+const PALM_SCORE = 0.5, PALM_NMS_IOU = 0.3, DETECT_SCORE = 0.8, TRACK_SCORE = 0.5, DETECT_INTERVAL = 3;
+const ROI_SHIFT_Y = -0.4, ROI_ENLARGE = 3.0, SAME_HAND_RATIO = 0.5;
+const HANDEDNESS_FLIP = false;
+const FILTER_MIN_CUTOFF = 1.5, FILTER_BETA = 0.01, FILTER_D_CUTOFF = 1.0;
+const PALM_POINT_IDS = [0, 5, 9, 13, 17, 1, 2];
+const BONES = [0,1,1,2,2,3,3,4, 0,5,5,6,6,7,7,8, 5,9,9,10,10,11,11,12, 9,13,13,14,14,15,15,16, 13,17,0,17,17,18,18,19,19,20];
+
+// ── GestureRecognizer 상수 (슬라이더로 바뀐다) ──
+const GESTURE_DEFAULTS = { EXTEND_RATIO: 1.05, THUMB_OUT_RATIO: 0.55, PINCH_ON: 0.30, PINCH_OFF: 0.45, PINCH_INDEX_REACH: 0.7, HOLD_MS: 120 };
+const G = Object.assign({}, GESTURE_DEFAULTS);
+const NONE = 0, OPEN = 1, FIST = 2, POINT = 3, VICTORY = 4, PINCH = 5;
+const NAMES = ["NONE", "OPEN", "FIST", "POINT", "VICTORY", "PINCH"];
+const LABELS = ["해당 없음", "손바닥 펴기", "주먹", "가리키기", "V 사인", "집기"];
+const GESTURE_COLORS = ["#8A98B3", "#38E8D5", "#F5B95A", "#7DD3FC", "#A78BFA", "#F472B6"];
+const FINGER_PIP = [2, 6, 10, 14, 18], FINGER_TIP = [4, 8, 12, 16, 20];
+const FINGER_NAMES = ["엄지", "검지", "중지", "약지", "새끼"];
+
+// ── 앵커 ──
+const anchorX = new Float32Array(ANCHOR_COUNT), anchorY = new Float32Array(ANCHOR_COUNT);
+(function buildAnchors() {
+  let at = 0;
+  const grids = [24, 12], perCell = [2, 6];
+  for (let g = 0; g < 2; g++) {
+    const n = grids[g];
+    for (let row = 0; row < n; row++) for (let col = 0; col < n; col++) for (let k = 0; k < perCell[g]; k++) {
+      anchorX[at] = (col + 0.5) / n; anchorY[at] = (row + 0.5) / n; at++;
+    }
+  }
+})();
+
+// ── One Euro ──
+class OneEuro {
+  constructor() { this.value = 0; this.derivative = 0; this.last = 0; }
+  alpha(cutoff, dt) { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); }
+  filter(input, nowMs) {
+    if (this.last === 0) { this.last = nowMs; this.value = input; this.derivative = 0; return input; }
+    const dt = Math.max(1, nowMs - this.last) / 1000;
+    this.last = nowMs;
+    const raw = (input - this.value) / dt;
+    this.derivative += this.alpha(FILTER_D_CUTOFF, dt) * (raw - this.derivative);
+    const cutoff = FILTER_MIN_CUTOFF + FILTER_BETA * Math.abs(this.derivative);
+    this.value += this.alpha(cutoff, dt) * (input - this.value);
+    return this.value;
+  }
+}
+
+class HandTrack {
+  constructor(id) {
+    this.id = id; this.startedMs = 0; this.score = 0; this.handedness = 0; this.roi = null;
+    this.rawX = new Float32Array(21); this.rawY = new Float32Array(21); this.rawZ = new Float32Array(21);
+    this.fx = []; this.fy = [];
+    for (let k = 0; k < 21; k++) { this.fx.push(new OneEuro()); this.fy.push(new OneEuro()); }
+  }
+  accept(r, roi, now) {
+    if (this.startedMs === 0) this.startedMs = now;
+    this.rawX.set(r.x); this.rawY.set(r.y); this.rawZ.set(r.z);
+    this.handedness = this.score === 0 ? r.handedness : this.handedness * 0.8 + r.handedness * 0.2;
+    this.score = r.score; this.roi = roi;
+    for (let k = 0; k < 21; k++) { this.fx[k].filter(r.x[k], now); this.fy[k].filter(r.y[k], now); }
+  }
+  palmCenterX() { const x = this.rawX; return (x[0] + x[5] + x[9] + x[13] + x[17]) / 5; }
+  palmCenterY() { const y = this.rawY; return (y[0] + y[5] + y[9] + y[13] + y[17]) / 5; }
+  palmSize() { return Math.hypot(this.rawX[9] - this.rawX[0], this.rawY[9] - this.rawY[0]); }
+  snapshot(now) {
+    const h = { id: this.id, x: new Float32Array(21), y: new Float32Array(21), z: Float32Array.from(this.rawZ),
+      score: this.score, handedness: this.handedness, roiX: [0,0,0,0], roiY: [0,0,0,0] };
+    for (let k = 0; k < 21; k++) { h.x[k] = this.fx[k].value; h.y[k] = this.fy[k].value; }
+    h.rightHand = (this.handedness > 0.5) !== HANDEDNESS_FLIP;
+    h.palmSize = Math.hypot(h.x[9] - h.x[0], h.y[9] - h.y[0]);
+    h.trackedMs = now - this.startedMs;
+    if (this.roi) {
+      const ci = [-0.5, 0.5, 0.5, -0.5], cj = [-0.5, -0.5, 0.5, 0.5], r = this.roi;
+      for (let c = 0; c < 4; c++) {
+        const lx = r.cx + ci[c] * r.side, ly = r.cy + cj[c] * r.side;
+        h.roiX[c] = lx * r.rx + ly * r.dx; h.roiY[c] = lx * r.ry + ly * r.dy;
+      }
+    }
+    return h;
+  }
+}
+
+class HandTracker {
+  constructor() {
+    this.palmInput = new Float32Array(PALM_SIZE * PALM_SIZE * 3);
+    this.landmarkInput = new Float32Array(LANDMARK_SIZE * LANDMARK_SIZE * 3);
+    this.tracks = []; this.nextId = 1; this.framesSinceDetect = 0;
+  }
+  async load() {
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+    ort.env.wasm.numThreads = 1;
+    const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+    this.palm = await ort.InferenceSession.create(MODEL_DIR + PALM_MODEL, opts);
+    this.landmark = await ort.InferenceSession.create(MODEL_DIR + LANDMARK_MODEL, opts);
+  }
+  reset() { this.tracks = []; this.nextId = 1; this.framesSinceDetect = 0; }
+
+  async process(px, w, h, now) {
+    const started = performance.now();
+    const kept = [];
+    for (const track of this.tracks) {
+      const roi = this.roiFromLandmarks(track.rawX, track.rawY);
+      if (!roi) continue;
+      const r = await this.runLandmarks(px, w, h, roi);
+      if (!r || r.score < TRACK_SCORE) continue;
+      track.accept(r, roi, now); kept.push(track);
+    }
+    this.removeDuplicates(kept);
+    let detected = false;
+    this.framesSinceDetect++;
+    if (kept.length < MAX_HANDS && (kept.length === 0 || this.framesSinceDetect >= DETECT_INTERVAL)) {
+      this.framesSinceDetect = 0; detected = true;
+      const palms = await this.runPalm(px, w, h);
+      for (const palm of palms) {
+        if (kept.length >= MAX_HANDS) break;
+        if (this.overlapsTrack(palm, kept)) continue;
+        const roi = this.roiFromPoints(palm.px, palm.py);
+        if (!roi) continue;
+        const r = await this.runLandmarks(px, w, h, roi);
+        if (!r || r.score < DETECT_SCORE) continue;
+        const track = new HandTrack(this.nextId++);
+        track.accept(r, roi, now); kept.push(track);
+        this.removeDuplicates(kept);
+      }
+    }
+    this.tracks = kept;
+    return { hands: kept.map(t => t.snapshot(now)), inferenceMs: performance.now() - started, detected, w, h };
+  }
+
+  async runPalm(px, w, h) {
+    const side = Math.max(w, h), padX = (side - w) / 2, padY = (side - h) / 2, unit = side / PALM_SIZE;
+    const sub = subSamples(unit);
+    let at = 0;
+    for (let j = 0; j < PALM_SIZE; j++) for (let i = 0; i < PALM_SIZE; i++) {
+      sampleArea(px, w, h, (i + 0.5) * unit - padX, (j + 0.5) * unit - padY, unit, 0, 0, unit, sub, this.palmInput, at);
+      at += 3;
+    }
+    const input = new ort.Tensor("float32", this.palmInput, [1, PALM_SIZE, PALM_SIZE, 3]);
+    const out = await this.palm.run({ [this.palm.inputNames[0]]: input });
+    const raw = out.Identity.data, scores = out.Identity_1.data;
+    const candidates = [];
+    for (let a = 0; a < ANCHOR_COUNT; a++) {
+      const logit = Math.max(-80, Math.min(80, scores[a]));
+      const score = 1 / (1 + Math.exp(-logit));
+      if (score < PALM_SCORE) continue;
+      const b = a * 18;
+      const cx = anchorX[a] + raw[b] / PALM_SIZE, cy = anchorY[a] + raw[b + 1] / PALM_SIZE;
+      const bw = raw[b + 2] / PALM_SIZE, bh = raw[b + 3] / PALM_SIZE;
+      const palm = { score, x1: (cx - bw / 2) * side - padX, y1: (cy - bh / 2) * side - padY,
+        x2: (cx + bw / 2) * side - padX, y2: (cy + bh / 2) * side - padY, px: [], py: [] };
+      for (let k = 0; k < 7; k++) {
+        palm.px.push((anchorX[a] + raw[b + 4 + k * 2] / PALM_SIZE) * side - padX);
+        palm.py.push((anchorY[a] + raw[b + 5 + k * 2] / PALM_SIZE) * side - padY);
+      }
+      candidates.push(palm);
+    }
+    candidates.sort((p, q) => q.score - p.score);
+    const picked = [];
+    for (const p of candidates) {
+      if (!picked.some(q => iou(p, q) > PALM_NMS_IOU)) picked.push(p);
+      if (picked.length >= MAX_HANDS * 2) break;
+    }
+    return picked;
+  }
+
+  async runLandmarks(px, w, h, roi) {
+    const unit = roi.side / LANDMARK_SIZE, sub = subSamples(unit);
+    let at = 0;
+    for (let j = 0; j < LANDMARK_SIZE; j++) {
+      const ly = roi.cy + ((j + 0.5) / LANDMARK_SIZE - 0.5) * roi.side;
+      for (let i = 0; i < LANDMARK_SIZE; i++) {
+        const lx = roi.cx + ((i + 0.5) / LANDMARK_SIZE - 0.5) * roi.side;
+        sampleArea(px, w, h, lx * roi.rx + ly * roi.dx, lx * roi.ry + ly * roi.dy,
+          unit * roi.rx, unit * roi.ry, unit * roi.dx, unit * roi.dy, sub, this.landmarkInput, at);
+        at += 3;
+      }
+    }
+    const input = new ort.Tensor("float32", this.landmarkInput, [1, LANDMARK_SIZE, LANDMARK_SIZE, 3]);
+    const out = await this.landmark.run({ [this.landmark.inputNames[0]]: input });
+    const coords = out.Identity.data;
+    const r = { score: out.Identity_1.data[0], handedness: out.Identity_2.data[0],
+      x: new Float32Array(21), y: new Float32Array(21), z: new Float32Array(21) };
+    const scale = roi.side / LANDMARK_SIZE;
+    for (let k = 0; k < 21; k++) {
+      const lx = roi.cx + (coords[k * 3] - LANDMARK_SIZE / 2) * scale;
+      const ly = roi.cy + (coords[k * 3 + 1] - LANDMARK_SIZE / 2) * scale;
+      r.x[k] = lx * roi.rx + ly * roi.dx; r.y[k] = lx * roi.ry + ly * roi.dy; r.z[k] = coords[k * 3 + 2] * scale;
+    }
+    return r;
+  }
+
+  roiFromLandmarks(x, y) {
+    return this.roiFromPoints(PALM_POINT_IDS.map(k => x[k]), PALM_POINT_IDS.map(k => y[k]));
+  }
+  roiFromPoints(px, py) {
+    const ux = px[2] - px[0], uy = py[2] - py[0], len = Math.hypot(ux, uy);
+    if (len < 1e-3) return null;
+    const roi = { dx: -ux / len, dy: -uy / len };
+    roi.rx = roi.dy; roi.ry = -roi.dx;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let k = 0; k < px.length; k++) {
+      const lx = px[k] * roi.rx + py[k] * roi.ry, ly = px[k] * roi.dx + py[k] * roi.dy;
+      minX = Math.min(minX, lx); maxX = Math.max(maxX, lx); minY = Math.min(minY, ly); maxY = Math.max(maxY, ly);
+    }
+    const bw = maxX - minX, bh = maxY - minY;
+    roi.cx = (minX + maxX) / 2; roi.cy = (minY + maxY) / 2 + ROI_SHIFT_Y * bh;
+    roi.side = Math.max(bw, bh) * ROI_ENLARGE;
+    return roi.side < 8 ? null : roi;
+  }
+  overlapsTrack(palm, list) {
+    const cx = (palm.x1 + palm.x2) / 2, cy = (palm.y1 + palm.y2) / 2;
+    const reach = Math.max(palm.x2 - palm.x1, palm.y2 - palm.y1) * 0.8;
+    return list.some(t => {
+      const limit = Math.max(reach, t.palmSize() * 0.8);
+      return Math.hypot(t.palmCenterX() - cx, t.palmCenterY() - cy) < limit;
+    });
+  }
+  removeDuplicates(list) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      outer: for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j];
+        const limit = Math.min(a.palmSize(), b.palmSize()) * SAME_HAND_RATIO;
+        if (Math.hypot(a.palmCenterX() - b.palmCenterX(), a.palmCenterY() - b.palmCenterY()) < limit) {
+          list.splice(list.indexOf(a.id < b.id ? b : a), 1); changed = true; break outer;
+        }
+      }
+    }
+  }
+}
+
+function iou(p, q) {
+  const ix = Math.max(0, Math.min(p.x2, q.x2) - Math.max(p.x1, q.x1));
+  const iy = Math.max(0, Math.min(p.y2, q.y2) - Math.max(p.y1, q.y1));
+  const inter = ix * iy, union = (p.x2 - p.x1) * (p.y2 - p.y1) + (q.x2 - q.x1) * (q.y2 - q.y1) - inter;
+  return union <= 0 ? 0 : inter / union;
+}
+function subSamples(unit) { return Math.max(1, Math.min(4, Math.ceil(unit))); }
+
+// px: RGBA 바이트 배열. 좌표는 픽셀 가장자리 기준. 영상 밖은 검은색.
+function sampleArea(px, w, h, fx, fy, ax, ay, bx, by, sub, out, at) {
+  let r = 0, g = 0, b = 0;
+  for (let sj = 0; sj < sub; sj++) {
+    const tj = (sj + 0.5) / sub - 0.5;
+    for (let si = 0; si < sub; si++) {
+      const ti = (si + 0.5) / sub - 0.5;
+      const x = fx + ti * ax + tj * bx - 0.5, y = fy + ti * ay + tj * by - 0.5;
+      const x0 = Math.floor(x), y0 = Math.floor(y), wx = x - x0, wy = y - y0;
+      const w00 = (1 - wx) * (1 - wy), w10 = wx * (1 - wy), w01 = (1 - wx) * wy, w11 = wx * wy;
+      const i00 = idx(w, h, x0, y0), i10 = idx(w, h, x0 + 1, y0), i01 = idx(w, h, x0, y0 + 1), i11 = idx(w, h, x0 + 1, y0 + 1);
+      for (let c = 0; c < 3; c++) {
+        const v = (i00 < 0 ? 0 : px[i00 + c] * w00) + (i10 < 0 ? 0 : px[i10 + c] * w10)
+                + (i01 < 0 ? 0 : px[i01 + c] * w01) + (i11 < 0 ? 0 : px[i11 + c] * w11);
+        if (c === 0) r += v; else if (c === 1) g += v; else b += v;
+      }
+    }
+  }
+  const norm = 1 / (255 * sub * sub);
+  out[at] = r * norm; out[at + 1] = g * norm; out[at + 2] = b * norm;
+}
+function idx(w, h, x, y) { return (x < 0 || y < 0 || x >= w || y >= h) ? -1 : (y * w + x) * 4; }
+
+// ── GestureRecognizer ──
+class GestureRecognizer {
+  constructor() { this.states = new Map(); }
+  reset() { this.states.clear(); }
+  update(hands, now) {
+    const next = new Map();
+    for (const hand of hands) {
+      const s = this.states.get(hand.id) || { handId: hand.id, gesture: NONE, previous: NONE, raw: NONE, candidate: NONE,
+        candidateSince: now, changedAt: now, justChanged: false, pinched: false, extended: [], fingerRatio: [] };
+      this.measure(hand, s);
+      s.raw = this.classify(s);
+      s.justChanged = false;
+      if (s.raw !== s.candidate) { s.candidate = s.raw; s.candidateSince = now; }
+      if (s.candidate !== s.gesture && now - s.candidateSince >= G.HOLD_MS) {
+        s.previous = s.gesture; s.gesture = s.candidate; s.changedAt = now; s.justChanged = true;
+      }
+      next.set(hand.id, s);
+    }
+    this.states = next;
+  }
+  measure(hand, s) {
+    const palm = Math.max(hand.palmSize, 1), d = (a, b) => Math.hypot(hand.x[a] - hand.x[b], hand.y[a] - hand.y[b]);
+    s.palmSize = palm;
+    s.palmX = (hand.x[0] + hand.x[5] + hand.x[9] + hand.x[13] + hand.x[17]) / 5;
+    s.palmY = (hand.y[0] + hand.y[5] + hand.y[9] + hand.y[13] + hand.y[17]) / 5;
+    for (let f = 1; f < 5; f++) {
+      s.fingerRatio[f] = d(0, FINGER_TIP[f]) / Math.max(d(0, FINGER_PIP[f]), 1);
+      s.extended[f] = s.fingerRatio[f] > G.EXTEND_RATIO;
+    }
+    s.fingerRatio[0] = d(4, 5) / palm;
+    s.extended[0] = s.fingerRatio[0] > G.THUMB_OUT_RATIO;
+    s.pinchDistance = d(4, 8) / palm;
+    s.indexReach = Math.hypot(hand.x[8] - s.palmX, hand.y[8] - s.palmY) / palm;
+    s.pinchX = (hand.x[4] + hand.x[8]) / 2; s.pinchY = (hand.y[4] + hand.y[8]) / 2;
+    s.pinchStrength = Math.max(0, Math.min(1, (G.PINCH_OFF - s.pinchDistance) / (G.PINCH_OFF - G.PINCH_ON)));
+  }
+  classify(s) {
+    if (s.pinched) s.pinched = s.pinchDistance < G.PINCH_OFF;
+    else s.pinched = s.pinchDistance < G.PINCH_ON && s.indexReach > G.PINCH_INDEX_REACH;
+    if (s.pinched) return PINCH;
+    const [thumb, index, middle, ring, pinky] = s.extended;
+    if (index && middle && ring && pinky) return OPEN;
+    if (!index && !middle && !ring && !pinky) return thumb ? NONE : FIST;
+    if (index && !middle && !ring && !pinky) return POINT;
+    if (index && middle && !ring && !pinky) return VICTORY;
+    return NONE;
+  }
+}
+
+// ── 화면 ──
+const view = document.getElementById("view"), ctx = view.getContext("2d");
+const grab = document.createElement("canvas"), gctx = grab.getContext("2d", { willReadFrequently: true });
+const video = document.getElementById("video");
+const tracker = new HandTracker(), gestures = new GestureRecognizer();
+let mirror = true, mode = "idle", source = null, latest = { hands: [], inferenceMs: 0, detected: false };
+let modelReady = false, loopBusy = false, inferCount = 0, inferWindow = performance.now(), inferFps = 0;
+const $ = id => document.getElementById(id);
+
+function setStatus() {
+  const el = $("status");
+  const parts = [`<span>모델 <b>${modelReady ? "준비됨" : "불러오는 중"}</b></span>`];
+  if (mode !== "idle") {
+    parts.push(`<span>입력 <b>${grab.width}×${grab.height}</b></span>`);
+    parts.push(`<span>추론 <b>${latest.inferenceMs.toFixed(1)} ms</b></span>`);
+    if (mode === "camera") parts.push(`<span>추론 속도 <b>${inferFps.toFixed(1)} 회/초</b></span>`);
+    parts.push(`<span>손 <b>${latest.hands.length}</b></span>`);
+  }
+  if (errorText) parts.push(`<span class="err">${errorText}</span>`);
+  el.innerHTML = parts.join("");
+}
+let errorText = "";
+
+async function inferLoop() {
+  if (mode !== "camera" || loopBusy || !modelReady) return;
+  loopBusy = true;
+  try {
+    while (mode === "camera") {
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        if (grab.width !== video.videoWidth || grab.height !== video.videoHeight) {
+          grab.width = video.videoWidth; grab.height = video.videoHeight; view.width = grab.width; view.height = grab.height;
+        }
+        gctx.drawImage(video, 0, 0);
+        const data = gctx.getImageData(0, 0, grab.width, grab.height).data;
+        latest = await tracker.process(data, grab.width, grab.height, performance.now());
+        inferCount++;
+        const t = performance.now();
+        if (t - inferWindow > 1000) { inferFps = inferCount * 1000 / (t - inferWindow); inferCount = 0; inferWindow = t; }
+      }
+      await new Promise(r => requestAnimationFrame(r));
+    }
+  } catch (e) {
+    errorText = "추론 오류: " + e.message; console.error(e);
+  } finally { loopBusy = false; }
+}
+
+function render() {
+  if (mode === "camera") gestures.update(latest.hands, performance.now());
+  const w = view.width, h = view.height;
+  ctx.save();
+  if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  if (mode === "camera" && video.readyState >= 2) ctx.drawImage(video, 0, 0, w, h);
+  else if (mode === "photo") ctx.drawImage(grab, 0, 0);
+  else { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h); }
+  ctx.restore();
+  const sx = x => mirror ? w - x : x;
+  const scale = Math.max(1, w / 640);
+  for (const hand of latest.hands) {
+    const ink = hand.id % 2 === 1 ? "#38E8D5" : "#A78BFA";
+    const s = gestures.states.get(hand.id);
+    ctx.strokeStyle = ink; ctx.globalAlpha = 0.35; ctx.lineWidth = 1 * scale;
+    ctx.beginPath();
+    for (let c = 0; c < 4; c++) { const fn = c ? "lineTo" : "moveTo"; ctx[fn](sx(hand.roiX[c]), hand.roiY[c]); }
+    ctx.closePath(); ctx.stroke();
+    ctx.globalAlpha = 0.95; ctx.lineWidth = 2.5 * scale;
+    ctx.beginPath();
+    for (let k = 0; k < BONES.length; k += 2) {
+      ctx.moveTo(sx(hand.x[BONES[k]]), hand.y[BONES[k]]); ctx.lineTo(sx(hand.x[BONES[k + 1]]), hand.y[BONES[k + 1]]);
+    }
+    ctx.stroke();
+    for (let k = 0; k < 21; k++) {
+      const tip = FINGER_TIP.includes(k);
+      ctx.fillStyle = tip ? "#F4FBFF" : ink;
+      ctx.beginPath(); ctx.arc(sx(hand.x[k]), hand.y[k], (tip ? 4.5 : 3) * scale, 0, Math.PI * 2); ctx.fill();
+    }
+    if (s) {
+      ctx.strokeStyle = "#F4FBFF"; ctx.globalAlpha = 0.25 + 0.75 * s.pinchStrength; ctx.lineWidth = (1 + 3 * s.pinchStrength) * scale;
+      ctx.beginPath(); ctx.moveTo(sx(hand.x[4]), hand.y[4]); ctx.lineTo(sx(hand.x[8]), hand.y[8]); ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (s.gesture === PINCH) {
+        ctx.strokeStyle = ink; ctx.lineWidth = 2 * scale;
+        ctx.beginPath(); ctx.arc(sx(s.pinchX), s.pinchY, 13 * scale, 0, Math.PI * 2); ctx.stroke();
+      }
+      const label = LABELS[s.gesture];
+      ctx.font = `600 ${14 * scale}px ${getComputedStyle(document.body).fontFamily}`;
+      // 손목 아래에 두되, 화면 밖으로 나가면 화면 안으로 당긴다
+      const tw = ctx.measureText(label).width, bw = tw + 16 * scale, bh = 22 * scale;
+      const lx = Math.max(4, Math.min(w - bw - 4, sx(hand.x[0]) - bw / 2));
+      const ly = Math.max(4, Math.min(h - bh - 4, hand.y[0] + 12 * scale));
+      ctx.fillStyle = GESTURE_COLORS[s.gesture];
+      ctx.beginPath(); ctx.roundRect(lx, ly, bw, bh, 11 * scale); ctx.fill();
+      ctx.fillStyle = "#080D18"; ctx.textBaseline = "middle";
+      ctx.fillText(label, lx + 8 * scale, ly + 11 * scale);
+    }
+    ctx.globalAlpha = 1;
+  }
+  renderPanel();
+  setStatus();
+  requestAnimationFrame(render);
+}
+
+let panelAt = 0;
+function renderPanel() {
+  const now = performance.now();
+  if (now - panelAt < 100) return;
+  panelAt = now;
+  const box = $("hands");
+  if (!latest.hands.length) { box.innerHTML = '<p class="none">잡힌 손이 없습니다.</p>'; return; }
+  box.innerHTML = latest.hands.map(hand => {
+    const s = gestures.states.get(hand.id);
+    if (!s) return "";
+    const ink = hand.id % 2 === 1 ? "var(--cyan)" : "var(--purple)";
+    const rows = [];
+    for (let f = 0; f < 5; f++) {
+      const max = f === 0 ? 1.2 : 1.6, thr = f === 0 ? G.THUMB_OUT_RATIO : G.EXTEND_RATIO;
+      rows.push(meter(FINGER_NAMES[f], s.fingerRatio[f], max, thr, s.extended[f]));
+    }
+    rows.push(meter("집기", s.pinchDistance, 1.2, G.PINCH_ON, s.pinched));
+    rows.push(meter("검지거리", s.indexReach, 1.6, G.PINCH_INDEX_REACH, s.indexReach > G.PINCH_INDEX_REACH));
+    const raw = s.raw !== s.gesture ? ` <span style="color:var(--muted)">(${LABELS[s.raw]})</span>` : "";
+    return `<div class="hand"><div class="hand-head"><span class="dot" style="background:${ink}"></span>
+      #${hand.id} ${hand.rightHand ? "오른손" : "왼손"} · 신뢰도 ${hand.score.toFixed(2)}${raw}
+      <span class="gesture" style="background:${GESTURE_COLORS[s.gesture]}">${LABELS[s.gesture]}</span></div>
+      <div class="meters">${rows.join("")}</div></div>`;
+  }).join("");
+}
+function meter(name, value, max, threshold, on) {
+  const pct = Math.max(0, Math.min(1, value / max)) * 100, mark = Math.min(1, threshold / max) * 100;
+  return `<span class="name">${name}</span><span class="bar"><i class="${on ? "on" : ""}" style="width:${pct}%"></i><u style="left:${mark}%"></u></span><span class="val">${value.toFixed(2)}</span>`;
+}
+
+// ── 임계값 슬라이더 ──
+const TUNE = [
+  ["EXTEND_RATIO", "손가락 펴짐 (손목→끝 / 손목→둘째 마디)", 0.8, 1.4, 0.01],
+  ["THUMB_OUT_RATIO", "엄지 펴짐 (엄지 끝→검지 뿌리 / 손바닥)", 0.2, 1.0, 0.01],
+  ["PINCH_ON", "집기 시작 (엄지 끝→검지 끝 / 손바닥)", 0.1, 0.6, 0.01],
+  ["PINCH_OFF", "집기 끝", 0.15, 0.8, 0.01],
+  ["PINCH_INDEX_REACH", "집기에 필요한 검지 거리", 0.3, 1.2, 0.01],
+  ["HOLD_MS", "손동작이 바뀌기까지 (ms)", 0, 400, 10],
+];
+function buildTune() {
+  $("tune").innerHTML = TUNE.map(([key, label, min, max, step]) =>
+    `<label for="t_${key}"><span>${label}</span><output id="o_${key}"></output>
+      <input id="t_${key}" type="range" min="${min}" max="${max}" step="${step}" value="${G[key]}"></label>`).join("");
+  for (const [key] of TUNE) {
+    $("t_" + key).addEventListener("input", e => { G[key] = Number(e.target.value); syncTune(); if (mode === "photo") rerunPhoto(); });
+  }
+  syncTune();
+}
+function syncTune() {
+  for (const [key] of TUNE) { $("o_" + key).textContent = key === "HOLD_MS" ? G[key] : G[key].toFixed(2); $("t_" + key).value = G[key]; }
+  $("javaOut").textContent = TUNE.map(([key]) => key === "HOLD_MS"
+    ? `static final int HOLD_MS = ${G[key]};`
+    : `static final float ${key} = ${G[key].toFixed(2)}f;`).join("\n");
+}
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("javaOut").textContent); $("copy").textContent = "복사됨"; }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($("javaOut")); getSelection().removeAllRanges(); getSelection().addRange(r); $("copy").textContent = "선택됨"; }
+  setTimeout(() => $("copy").textContent = "복사", 1500);
+});
+$("resetTune").addEventListener("click", () => { Object.assign(G, GESTURE_DEFAULTS); syncTune(); if (mode === "photo") rerunPhoto(); });
+
+// ── 입력 ──
+$("startCam").addEventListener("click", async () => {
+  errorText = "";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false });
+    video.srcObject = stream; await video.play();
+    tracker.reset(); gestures.reset(); mode = "camera"; $("empty").hidden = true;
+    $("startCam").textContent = "카메라 켜짐";
+    inferLoop();
+  } catch (e) {
+    errorText = "카메라를 열 수 없습니다: " + e.name + ". localhost 또는 https 주소로 열었는지, 브라우저 카메라 권한을 확인하세요.";
+  }
+});
+$("mirror").addEventListener("click", () => {
+  mirror = !mirror; $("mirror").setAttribute("aria-pressed", mirror); $("mirror").textContent = mirror ? "좌우 반전 켬" : "좌우 반전 끔";
+});
+$("photo").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await img.decode();
+  await runPhoto(img);
+  e.target.value = "";
+});
+
+let photoImage = null;
+async function runPhoto(img) {
+  if (!modelReady) { errorText = "모델을 불러오는 중입니다. 잠시 뒤 다시 시도하세요."; return null; }
+  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; $("startCam").textContent = "카메라 시작"; }
+  mode = "photo"; photoImage = img; $("empty").hidden = true;
+  grab.width = img.naturalWidth; grab.height = img.naturalHeight; view.width = grab.width; view.height = grab.height;
+  gctx.drawImage(img, 0, 0);
+  return rerunPhoto();
+}
+// 사진은 Java 테스트와 같이 두 번 돌린다: 처음은 손바닥 검출, 다음은 추적 경로. 손동작은 HOLD_MS를 넘겨 확정한다.
+async function rerunPhoto() {
+  const data = gctx.getImageData(0, 0, grab.width, grab.height).data;
+  tracker.reset(); gestures.reset();
+  await tracker.process(data, grab.width, grab.height, 1);
+  latest = await tracker.process(data, grab.width, grab.height, 34);
+  gestures.update(latest.hands, 0); gestures.update(latest.hands, 1000);
+  panelAt = 0;
+  return latest.hands.map(hand => {
+    const s = gestures.states.get(hand.id);
+    return { id: hand.id, right: hand.rightHand, score: +hand.score.toFixed(2), gesture: NAMES[s.gesture], wrist: [Math.round(hand.x[0]), Math.round(hand.y[0])] };
+  });
+}
+// 자동 검증용: 같은 주소에서 사진을 읽어 결과를 돌려준다.
+window.handTest = async url => { const img = new Image(); img.src = url; await img.decode(); return runPhoto(img); };
+
+buildTune();
+requestAnimationFrame(render);
+tracker.load().then(() => { modelReady = true; inferLoop(); }).catch(e => {
+  errorText = "모델을 불러오지 못했습니다: " + e.message + ". 저장소 최상위 폴더에서 서버를 띄웠는지 확인하세요."; console.error(e);
+});
+</script>
+</body>
+</html>

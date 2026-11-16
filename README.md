@@ -88,6 +88,17 @@ Windows는 `설정 > 개인 정보 및 보안 > 카메라`에서 카메라 액�
 
 손 추적은 별도 설치가 필요 없다. 스케치 폴더의 `code/`에 ONNX Runtime jar가, `data/`에 MediaPipe Hands 모델이 들어 있고 Processing이 자동으로 불러온다. Windows x64와 Apple Silicon Mac에서 동작하며, Intel Mac은 지원하지 않는다.
 
+Processing 없이 브라우저에서 손 추적과 손동작 판별을 시험할 수 있다. 저장소 최상위 폴더에서 정적 서버를 띄운다(Windows는 `python`).
+
+```bash
+python3 -m http.server 8000
+```
+
+브라우저에서 `http://localhost:8000/web/hand-test/`를 열고 `카메라 시작`을 누른다.
+
+- 카메라는 `localhost` 주소에서만 켜진다. 같은 와이파이의 휴대폰에서 IP 주소로 열면 카메라가 막힌다.
+- 같은 모델과 같은 계산을 JavaScript로 옮긴 것이다. 슬라이더로 임계값을 바꾸고, 그 값을 `GestureRecognizer.pde` 상수로 복사할 수 있다.
+
 손동작으로 효과를 입히는 기획과 단계는 [docs/HAND_INTERACTION_PLAN.md](docs/HAND_INTERACTION_PLAN.md)에 있다.
 
 카메라 권한, 검색 방식, 실패 시 점검, 파티클 연결 방법, 손 추적 구조는 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)에 있다.

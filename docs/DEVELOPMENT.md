@@ -349,6 +349,16 @@ jar에는 Windows x64, macOS Apple Silicon, Linux용 네이티브 라이브러�
 
 실제 카메라로는 확인하지 않았다. 임계값은 카메라로 확인하면서 조정한다.
 
+## 웹 테스트 페이지
+
+`web/hand-test/index.html`은 `HandTracker`와 `GestureRecognizer`를 JavaScript로 그대로 옮긴 페이지다. Processing 없이 브라우저와 노트북 카메라로 손 추적과 손동작 판별을 확인한다.
+
+- 실행: 저장소 최상위에서 `python3 -m http.server 8000`(Windows는 `python`)을 실행하고 `http://localhost:8000/web/hand-test/`를 연다. 모델은 `../../EchoesOfMemory/data/`에서 읽으므로 최상위에서 띄워야 한다.
+- 추론: onnxruntime-web 1.20.1(WASM, 단일 스레드)을 jsDelivr에서 불러온다. 첫 실행에는 인터넷이 필요하다.
+- 화면: 관절, 손동작 이름, 손가락별 측정값 막대(흰 눈금이 임계값)를 보여 준다. 슬라이더로 바꾼 임계값을 Java 상수 형태로 복사할 수 있다. `사진으로 테스트`로 이미지 파일도 넣을 수 있다.
+- 2026-11-16 Windows의 Claude 내장 브라우저(Chromium)에서 MediaPipe 테스트 사진 7장을 넣었다. 손동작, 왼손/오른손, 손목 좌표(1 px 안쪽)가 Java 결과와 같았다. 브라우저 쪽 추론은 양손 기준 약 50 ms로 Java보다 느리다.
+- `HandTracker.pde`나 `GestureRecognizer.pde`의 상수나 계산을 바꾸면 이 페이지도 함께 바꾼다.
+
 ## 테스트 체크리스트
 
 완료한 항목만 체크한다. 2026-11-10에 Windows 항목을 확인했다. macOS 항목은 아직 미검증이다.
