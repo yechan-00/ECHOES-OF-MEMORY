@@ -59,6 +59,14 @@ class ParticleSystem {
   static final int POINTER_IDLE_MS = 140;
   static final int MAX_FORCES = 8;
 
+  // 손동작 힘. HandEffects가 update() 전에 매 프레임 등록하고, update()가 끝나면 비운다.
+  static final int FIELD_PUSH = 0;     // 중심에서 바깥으로 민다 (손바닥 바람, 검지 끝)
+  static final int FIELD_GATHER = 1;   // 중심으로 끌어와 입자마다 다른 거리(core 안)에 머물게 한다 (집기, 주먹)
+  static final int FIELD_BURST = 2;    // 그 프레임에 한 번만 바깥으로 튕긴다 (집기·주먹을 놓는 순간)
+  static final int MAX_HAND_FIELDS = 8;
+  // GATHER가 core보다 안쪽 입자를 밖으로 미는 정도. 0이면 한 점으로 뭉친다.
+  static final float GATHER_INNER_PUSH = 0.35;
+
   final int[] PALETTE = {
     0xFF6D4AA8,
     0xFF9B72E8,
@@ -110,6 +118,19 @@ class ParticleSystem {
   float sweepX = 0;
   float sweepY = 0;
   float radialScale = 1;
+  // 손동작 힘 (화면 좌표)
+  int[] handKind = new int[MAX_HAND_FIELDS];
+  float[] handX = new float[MAX_HAND_FIELDS];
+  float[] handY = new float[MAX_HAND_FIELDS];
+  float[] handR = new float[MAX_HAND_FIELDS];
+  float[] handS = new float[MAX_HAND_FIELDS];
+  float[] handCore = new float[MAX_HAND_FIELDS];
+  float[] handSwirl = new float[MAX_HAND_FIELDS];
+  int handFieldCount = 0;
+  float handAddX = 0;
+  float handAddY = 0;
+  // 손이 잡혀 있는 동안 움직임 감지 힘을 줄여 손동작 힘과 다투지 않게 한다. HandEffects가 정한다.
+  float motionScale = 1;
 
   ParticleSystem(PApplet app) {
     this.app = app;
@@ -160,7 +181,28 @@ class ParticleSystem {
     else if (scatterHeld) label = "spring + space";
     else if (pointerHot) label = "spring + mouse";
     if (motionHot) label += " + motion";
+    if (handFieldCount > 0) label += " + hands";
     return label;
+  }
+
+  // 다음 update() 한 번만 적용된다. 좌표와 반지름은 화면 px다.
+  // strength: PUSH·GATHER는 가속도, BURST는 속도에 더하는 양. core: GATHER가 입자를 머물게 하는 반지름.
+  // swirl: GATHER에서 중심을 도는 힘 (부호가 방향).
+  void addHandField(int kind, float x, float y, float radius, float strength, float core, float swirl) {
+    if (handFieldCount >= MAX_HAND_FIELDS || radius <= 1f) return;
+    if (strength != strength || x != x || y != y) return;
+    int f = handFieldCount++;
+    handKind[f] = kind;
+    handX[f] = x;
+    handY[f] = y;
+    handR[f] = radius;
+    handS[f] = strength;
+    handCore[f] = core;
+    handSwirl[f] = swirl;
+  }
+
+  void setMotionScale(float scale) {
+    motionScale = scale < 0 ? 0 : (scale > 1 ? 1 : scale);
   }
 
   void clearMotion() {
@@ -271,6 +313,7 @@ class ParticleSystem {
   void update(CameraManager camera, BackgroundMask backgroundMask) {
     if (camera == null || !camera.pixelsReady()) {
       forceCount = 0;
+      handFieldCount = 0;
       pointerHot = false;
       return;
     }
@@ -279,6 +322,7 @@ class ParticleSystem {
     int frameH = camera.frameHeight();
     if (frameW <= 0 || frameH <= 0) {
       forceCount = 0;
+      handFieldCount = 0;
       pointerHot = false;
       return;
     }
@@ -328,7 +372,7 @@ class ParticleSystem {
     float minY = -48;
     float maxX = app.width + 48;
     float maxY = app.height + 48;
-    boolean pushing = scatterHeld || pointerHot || forceCount > 0 || motionHot;
+    boolean pushing = scatterHeld || pointerHot || forceCount > 0 || motionHot || handFieldCount > 0;
 
     for (int i = 0; i < count; i++) {
       Particle particle = particles[i];
@@ -418,9 +462,9 @@ class ParticleSystem {
 
       if (motionHot && particle.presence > 0.02f) {
         accumulateMotion(particle);
-        ax += motionAddX;
-        ay += motionAddY;
-        float hit = motionHit * RELEASE_GAIN;
+        ax += motionAddX * motionScale;
+        ay += motionAddY * motionScale;
+        float hit = motionHit * RELEASE_GAIN * motionScale;
         if (hit > 1) hit = 1;
         if (hit > particle.release) particle.release = hit;
       }
@@ -443,6 +487,12 @@ class ParticleSystem {
         }
       }
 
+      if (handFieldCount > 0 && particle.presence > 0.02f) {
+        applyHandFields(particle);
+        ax += handAddX;
+        ay += handAddY;
+      }
+
       float homeX = particle.home.x - particle.position.x;
       float homeY = particle.home.y - particle.position.y;
       if (!pushing && homeX * homeX + homeY * homeY < 0.2f && particle.speedSq < 0.02f) {
@@ -459,6 +509,66 @@ class ParticleSystem {
       if (particle.visible) drawn++;
     }
     forceCount = 0;
+    handFieldCount = 0;
+  }
+
+  // 등록된 손동작 힘을 입자 하나에 더한다. 가속도는 handAddX/Y로 돌려주고,
+  // BURST는 속도를 바로 바꾼다. 힘에 닿은 입자는 release를 올려 스프링이 잠시 풀리게 한다.
+  void applyHandFields(Particle particle) {
+    handAddX = 0;
+    handAddY = 0;
+    float px = particle.position.x;
+    float py = particle.position.y;
+    for (int f = 0; f < handFieldCount; f++) {
+      float dx = px - handX[f];
+      float dy = py - handY[f];
+      float radius = handR[f];
+      float d2 = dx * dx + dy * dy;
+      if (d2 >= radius * radius) continue;
+      float dist = (float) Math.sqrt(d2);
+      float fall = 1f - dist / radius;
+      // 중심과 거의 겹치면 입자 고유값으로 방향을 정한다
+      float dirX, dirY;
+      if (dist > 0.5f) {
+        dirX = dx / dist;
+        dirY = dy / dist;
+      } else {
+        float jl = (float) Math.sqrt(particle.jitterX * particle.jitterX + particle.jitterY * particle.jitterY);
+        if (jl < 0.001f) jl = 1;
+        dirX = particle.jitterX / jl;
+        dirY = particle.jitterY / jl;
+      }
+      float hit;
+      int kind = handKind[f];
+      if (kind == FIELD_PUSH) {
+        float power = handS[f] * fall * fall;
+        handAddX += dirX * power;
+        handAddY += dirY * power;
+        hit = fall * RELEASE_GAIN;
+      } else if (kind == FIELD_GATHER) {
+        // 입자마다 core 안의 다른 거리에 머물러 한 점이 아니라 빛 덩어리가 된다
+        float rest = handCore[f] * (0.2f + 0.8f * particle.fieldRank);
+        float pull = (dist - rest) / Math.max(handCore[f], 1f);
+        if (pull > 1) pull = 1;
+        if (pull < -GATHER_INNER_PUSH) pull = -GATHER_INNER_PUSH;
+        float edge = fall * 4f;
+        if (edge > 1) edge = 1;
+        float power = handS[f] * pull * edge;
+        handAddX -= dirX * power;
+        handAddY -= dirY * power;
+        float spin = handSwirl[f] * edge;
+        handAddX += -dirY * spin;
+        handAddY += dirX * spin;
+        hit = edge;
+      } else {
+        float impulse = handS[f] * fall;
+        particle.velocity.x += dirX * impulse;
+        particle.velocity.y += dirY * impulse;
+        hit = 1;
+      }
+      if (hit > 1) hit = 1;
+      if (hit > particle.release) particle.release = hit;
+    }
   }
 
   boolean pointerActive(int now) {
@@ -497,7 +607,7 @@ class ParticleSystem {
     String stats = count + " particles    " + drawn + " shown    " + (int) app.frameRate + " fps";
     String motion = motionLabel();
     String state = backgroundMask == null ? "" : backgroundMask.statusLabel();
-    String keys = "P Portrait    1 Sparse    2 Balanced    Space    Mouse    G Motion    B V C R M H";
+    String keys = "P Portrait    1 Sparse    2 Balanced    Space    Mouse    G Motion    T Hands    B V C R M H";
 
     app.noStroke();
     app.rectMode(PApplet.CORNER);

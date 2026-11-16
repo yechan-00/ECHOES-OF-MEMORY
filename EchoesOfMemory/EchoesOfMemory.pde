@@ -1,6 +1,7 @@
 // ECHOES OF MEMORY
 // 파티클 초상화, 기준 배경 차분, 스프링 복원, 움직임 감지, 손 추적(관절 21개, 양손).
-// 손동작 판별(펴기, 주먹, 가리키기, V 사인, 집기). 잔상과 네온, 손동작 효과는 아직 만들지 않는다.
+// 손동작 판별(펴기, 주먹, 가리키기, V 사인, 집기)과 파티클 효과(바람, 가르기와 궤적, 끌어모으기, 압축, 터뜨리기).
+// 잔상과 네온은 아직 만들지 않는다.
 // 프레임은 CameraManager.update()에서 한 번만 읽는다.
 
 CameraManager camera;
@@ -9,6 +10,7 @@ BackgroundMask backgroundMask;
 MotionDetector motion;
 HandTracker handTracker;
 GestureRecognizer gestures;
+HandEffects handEffects;
 boolean particleMode = false;
 boolean maskDebug = false;
 boolean spaceScatter = false;
@@ -49,6 +51,7 @@ void setup() {
       handTracker = new HandTracker(this);
       handTracker.start();
       gestures = new GestureRecognizer(this);
+      handEffects = new HandEffects(this);
     } catch (Throwable problem) {
       handTracker = null;
       println("[INIT] hand tracking disabled: " + problem.getClass().getName() + ": " + problem.getMessage());
@@ -87,9 +90,13 @@ void draw() {
     particles.setPointerEnabled(!maskDebug);
     if (ENABLE_MOTION_DETECTION && ENABLE_MOTION_FORCE) particles.prepareMotion(motion);
     else particles.clearMotion();
+    if (handEffects != null) handEffects.apply(particles, gestures, camera);
     particles.update(camera, backgroundMask);
     if (maskDebug && backgroundMask.isReady()) backgroundMask.drawMask(camera);
-    else particles.draw();
+    else {
+      particles.draw();
+      if (handEffects != null) handEffects.draw();
+    }
   } else if (maskDebug && backgroundMask.isReady()) {
     backgroundMask.drawMask(camera);
   } else {
@@ -168,6 +175,7 @@ void keyPressed() {
     if (command == 'c' || command == 'r') {
       handTracker.reset();
       if (gestures != null) gestures.reset();
+      if (handEffects != null) handEffects.reset();
     }
   }
 }

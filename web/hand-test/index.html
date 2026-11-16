@@ -401,7 +401,7 @@ class GestureRecognizer {
       s.justChanged = false;
       if (s.raw !== s.candidate) { s.candidate = s.raw; s.candidateSince = now; }
       if (s.candidate !== s.gesture && now - s.candidateSince >= G.HOLD_MS) {
-        s.previous = s.gesture; s.gesture = s.candidate; s.changedAt = now; s.justChanged = true;
+        s.previousHeldMs = now - s.changedAt; s.previous = s.gesture; s.gesture = s.candidate; s.changedAt = now; s.justChanged = true;
       }
       next.set(hand.id, s);
     }

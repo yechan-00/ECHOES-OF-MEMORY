@@ -115,6 +115,7 @@ ECHOES-OF-MEMORY/
 │   ├── MotionDetector.pde
 │   ├── HandTracker.pde
 │   ├── GestureRecognizer.pde
+│   ├── HandEffects.pde
 │   ├── EchoSystem.pde
 │   ├── NeonEffects.pde
 │   ├── code/        # onnxruntime-1.31.1.jar (손 추적 실행)

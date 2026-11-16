@@ -79,6 +79,7 @@ class GestureRecognizer {
         state.candidateSince = now;
       }
       if (state.candidate != state.gesture && now - state.candidateSince >= HOLD_MS) {
+        state.previousHeldMs = now - state.changedAt;
         state.previous = state.gesture;
         state.gesture = state.candidate;
         state.changedAt = now;
@@ -213,6 +214,7 @@ class HandGesture {
   int handId;
   int gesture = GestureRecognizer.NONE;    // 흔들림을 걸러낸 현재 손동작
   int previous = GestureRecognizer.NONE;   // 바로 전 손동작 (justChanged일 때 무엇에서 바뀌었는지)
+  int previousHeldMs;                      // 바로 전 손동작이 이어졌던 시간 (예: 집기를 놓을 때 얼마나 오래 쥐었는지)
   int raw = GestureRecognizer.NONE;        // 이번 프레임 판별값 (걸러내기 전)
   int candidate = GestureRecognizer.NONE;
   int candidateSince;
