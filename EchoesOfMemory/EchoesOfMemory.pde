@@ -1,12 +1,13 @@
 // ECHOES OF MEMORY
-// 파티클 초상화, 기준 배경 차분, 스프링 복원, 움직임 감지.
-// 잔상과 네온은 아직 만들지 않는다.
+// 파티클 초상화, 기준 배경 차분, 스프링 복원, 움직임 감지, 손 추적(관절 21개, 양손).
+// 잔상과 네온, 손동작 효과는 아직 만들지 않는다.
 // 프레임은 CameraManager.update()에서 한 번만 읽는다.
 
 CameraManager camera;
 ParticleSystem particles;
 BackgroundMask backgroundMask;
 MotionDetector motion;
+HandTracker handTracker;
 boolean particleMode = false;
 boolean maskDebug = false;
 boolean spaceScatter = false;
@@ -14,6 +15,8 @@ boolean motionFailed = false;
 // A: 둘 다 false. B: 감지만 true. C: 둘 다 true.
 boolean ENABLE_MOTION_DETECTION = true;
 boolean ENABLE_MOTION_FORCE = true;
+// 손 추적. 모델을 불러오지 못하면 꺼진 채로 나머지는 그대로 동작한다.
+boolean ENABLE_HAND_TRACKING = true;
 boolean cameraBegun = false;
 boolean startupFrameShown = false;
 PFont startupFont;
@@ -39,6 +42,16 @@ void setup() {
     if (problem instanceof Error) throw (Error) problem;
     throw new RuntimeException(problem);
   }
+
+  if (ENABLE_HAND_TRACKING) {
+    try {
+      handTracker = new HandTracker(this);
+      handTracker.start();
+    } catch (Throwable problem) {
+      handTracker = null;
+      println("[INIT] hand tracking disabled: " + problem.getClass().getName() + ": " + problem.getMessage());
+    }
+  }
 }
 
 void draw() {
@@ -63,6 +76,7 @@ void draw() {
   camera.update();
   backgroundMask.update(camera);
   if (ENABLE_MOTION_DETECTION) updateMotion();
+  if (handTracker != null) handTracker.submit(camera);
 
   boolean showParticles = particleMode && camera.pixelsReady();
   if (showParticles) {
@@ -82,6 +96,7 @@ void draw() {
   backgroundMask.drawNotice(maskDebug);
   if (maskDebug) particles.drawDebug(backgroundMask);
   if (motion != null && motion.showDebug) motion.drawDebug();
+  if (handTracker != null && handTracker.showDebug) handTracker.drawDebug(camera);
 }
 
 void drawStartup() {
@@ -142,6 +157,10 @@ void keyPressed() {
     motion.handleKey(command);
     if (command == 'c' || command == 'r') motion.reset();
   }
+  if (handTracker != null) {
+    handTracker.handleKey(command);
+    if (command == 'c' || command == 'r') handTracker.reset();
+  }
 }
 
 // 한글 입력기에서는 문자가 ㅔ, ㅠ처럼 들어오고 keyCode만 물리 키를 유지한다.
@@ -157,6 +176,7 @@ char commandKey() {
   if (keyCode == 'C') return 'c';
   if (keyCode == 'R') return 'r';
   if (keyCode == 'M') return 'm';
+  if (keyCode == 'T') return 't';
   if (keyCode == '[') return '[';
   if (keyCode == ']') return ']';
   return 0;

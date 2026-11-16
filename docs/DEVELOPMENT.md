@@ -22,7 +22,7 @@ Processing 4 Java Mode로 macOS와 Windows에서 같은 스케치를 개발하�
 | 카메라 입력 | 가능하면 640×480, 장치가 보고한 모드 우선 | `CameraManager` |
 | 배경색 | `#080D18` | `background(#080D18)` |
 | 포인트 / 보조색 | `#38E8D5` / `#A78BFA` | 상태 글자 |
-| 외부 런타임 | Python, OpenCV, Node.js 없음 | Video 라이브러리만 사용 |
+| 외부 런타임 | Python, OpenCV, Node.js 없음 | Video 라이브러리, 스케치 `code/`의 ONNX Runtime Java jar |
 | 인코딩 | UTF-8, BOM 없음 | PDE와 문서 |
 
 글꼴은 Java 논리 글꼴 `SansSerif`와 `Monospaced`만 사용한다. 운영체제 전용 카메라 이름, 장치 번호, 장치 경로는 넣지 않는다.
@@ -139,6 +139,7 @@ Windows 전용 장치 경로와 카메라 번호는 코드에 없다. Mac에서�
 | `R` | 목록 재검색 후 자동 선택으로 다시 연결한다. |
 | `M` | 표시용 좌우 반전. 기본값은 켜짐이다. |
 | `H` | 렌더 FPS, 수신 FPS, 해상도, 단축키를 보여 주거나 숨긴다. |
+| `T` | 손 추적 디버그 표시. 손마다 관절 21개, 뼈대, 관절 모델에 넣은 영역, 번호와 왼손/오른손, 추론 시간을 그린다. |
 
 장치가 하나뿐이면 `C`는 다른 장치로 넘어가지 않는다. 연결에 실패한 경우에는 그 장치를 한 번 더 시도한다.
 
@@ -268,6 +269,46 @@ diff -rq --exclude=.git . ../ECHOES-OF-MEMORY-remote
 
 `.DS_Store`, `Thumbs.db`, `Desktop.ini`, IDE 임시 파일은 `.gitignore`에 의해 커밋에서 빠진다.
 
+## 손 추적
+
+`HandTracker`가 카메라 프레임에서 손을 최대 두 개 찾고, 손마다 관절 21개의 좌표를 낸다. 손동작 판별과 효과 연결은 아직 없다.
+
+구성:
+
+| 파일 | 출처 | 크기 |
+| --- | --- | --- |
+| `code/onnxruntime-1.31.1.jar` | Maven Central `com.microsoft.onnxruntime:onnxruntime:1.31.1` (MIT) | 약 51 MB |
+| `data/palm_detection_mediapipe_2023feb.onnx` | opencv_zoo, MediaPipe Hands 변환본 (Apache 2.0) | 약 3.9 MB |
+| `data/handpose_estimation_mediapipe_2023feb.onnx` | opencv_zoo, MediaPipe Hands 변환본 (Apache 2.0) | 약 4.1 MB |
+
+jar에는 Windows x64, macOS Apple Silicon, Linux용 네이티브 라이브러리가 들어 있다. Intel Mac용은 없다. 클래스는 Java 8 대상이라 Processing 4에 들어 있는 JDK 17에서 동작한다.
+
+처리 흐름:
+
+1. `submit()`이 `draw()`에서 새 프레임의 픽셀을 복사해 작업 스레드에 넘긴다. 추론이 밀리면 중간 프레임은 버린다.
+2. 추적 중인 손은 이전 관절 위치로 회전된 정사각형 영역을 잡고 관절 모델만 돌린다.
+3. 잡힌 손이 두 개보다 적으면 손바닥 검출 모델로 새 손을 찾는다. 손이 하나라도 잡혀 있으면 3프레임마다 찾는다.
+4. 관절 좌표에 One Euro 필터를 적용하고 결과를 통째로 바꿔 내보낸다.
+
+받는 쪽이 쓰는 값:
+
+- `handTracker.hands()`: `Hand[]`. 결과가 0.5초보다 오래되면 빈 배열이다.
+- `Hand.id`: 추적이 이어지는 동안 유지되는 번호. 손을 놓쳤다가 다시 잡으면 새 번호가 된다.
+- `Hand.x[k]`, `Hand.y[k]`: 원본 프레임 좌표. 화면에는 `camera.frameToScreenX/Y()`로 바꿔 그린다.
+- `Hand.z[k]`: 손목 기준 상대 깊이. 작을수록 카메라에 가깝다.
+- `Hand.rightHand`, `Hand.score`, `Hand.palmSize`, `Hand.trackedMs`.
+- 관절 번호는 MediaPipe Hands와 같다. 0 손목, 4 엄지 끝, 8 검지 끝, 12 중지 끝, 16 약지 끝, 20 새끼 끝.
+
+2026-11-16 Windows에서 Processing JDK 17로 MediaPipe 테스트 사진 7장을 확인했다. 결과는 다음과 같다.
+
+- 모두 검출됐고, 양손 사진에서는 두 손이 모두 잡혔다. 거꾸로 된 손과 옆으로 누운 손도 포함이다.
+- 640×480 프레임에서 양손을 추적할 때 평균 16 ms, 최악 25 ms가 걸렸다.
+- 움직이는 사진을 60프레임 넣는 동안 두 손 모두 놓치지 않았고, 번호도 유지됐다.
+
+실제 카메라로는 아직 확인하지 않았다.
+
+권장 거리는 카메라에서 1 m 안쪽이다. 손이 화면에서 너무 작으면 손바닥 검출이 실패한다.
+
 ## 테스트 체크리스트
 
 완료한 항목만 체크한다. 2026-11-10에 Windows 항목을 확인했다. macOS 항목은 아직 미검증이다.
@@ -298,6 +339,15 @@ Windows:
 - [ ] 카메라가 없을 때 스케치가 종료되지 않고 안내가 남는다.
 - [x] 움직임 감지: `G`로 감지 칸과 중심 표시, `[` `]`로 임계값 조절이 동작한다.
 
+손 추적 (양쪽 운영체제):
+
+- [ ] 콘솔에 `ECHOES hands: model load failed`가 나오지 않는다.
+- [ ] `T`로 디버그 표시가 켜지고, 손을 올리면 뼈대가 손가락을 따라간다.
+- [ ] 양손을 함께 올리면 둘 다 잡히고, 움직이는 동안 번호가 바뀌지 않는다.
+- [ ] 화면에 표시된 `L`/`R`이 실제 손과 같다. 반대면 `HANDEDNESS_FLIP`을 `true`로 바꾼다.
+- [ ] 패널의 추론 시간이 대체로 33 ms보다 짧다.
+- [ ] Apple Silicon에서 ONNX Runtime 네이티브 라이브러리 오류가 없다.
+
 아직 구현하지 않은 항목은 테스트하지 않는다. 파티클, 잔상, 네온이다.
 
 | 날짜 | 운영체제 | Processing | Video | 확인한 항목 | 결과 |
@@ -319,6 +369,8 @@ Windows 실행 중 발견한 사항(2026-11-10):
 | `Particle.pde` | 입자 하나. 아직 주석만 있다. |
 | `ParticleSystem.pde` | 입자 무리. 아직 주석만 있다. |
 | `MotionDetector.pde` | 움직임 양. 아직 주석만 있다. |
+| `HandTracker.pde` | 양손 관절 21개 추적. 별도 스레드에서 ONNX 모델을 실행한다. |
+| `EchoesOfMemory/code/` | ONNX Runtime Java jar. Processing이 자동으로 클래스패스에 넣는다. |
 | `EchoSystem.pde` | 잔상. 아직 주석만 있다. |
 | `NeonEffects.pde` | 네온. 아직 주석만 있다. |
 | `EchoesOfMemory/data/` | 공유 리소스 |

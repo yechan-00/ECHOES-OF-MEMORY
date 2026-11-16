@@ -55,6 +55,7 @@ MacBook 카메라로 관람객의 모습을 실시간 촬영하고, 그 형상�
 | `R` | 목록을 다시 검색하고 연결을 다시 시도 |
 | `M` | 좌우 반전 켜기 / 끄기 |
 | `H` | 도움말과 프레임 정보 표시 |
+| `T` | 손 추적 디버그 표시 (양손 관절 21개) |
 
 대문자와 소문자 모두 동작한다. 화면 하단에도 `C: Camera`, `R: Retry`, `M: Mirror`, `H: Help`가 표시된다. 장치 번호와 제조사 이름은 코드에 고정되어 있지 않다.
 
@@ -85,7 +86,9 @@ Windows는 `설정 > 개인 정보 및 보안 > 카메라`에서 카메라 액�
 - 과거 모습의 잔상
 - 움직임이 멈추면 현재 모습으로 복원
 
-카메라 권한, 검색 방식, 실패 시 점검, 파티클 연결 방법은 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)에 있다.
+손 추적은 별도 설치가 필요 없다. 스케치 폴더의 `code/`에 ONNX Runtime jar가, `data/`에 MediaPipe Hands 모델이 들어 있고 Processing이 자동으로 불러온다. Windows x64와 Apple Silicon Mac에서 동작하며, Intel Mac은 지원하지 않는다.
+
+카메라 권한, 검색 방식, 실패 시 점검, 파티클 연결 방법, 손 추적 구조는 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)에 있다.
 
 ## 디렉터리
 
@@ -97,9 +100,11 @@ ECHOES-OF-MEMORY/
 │   ├── Particle.pde
 │   ├── ParticleSystem.pde
 │   ├── MotionDetector.pde
+│   ├── HandTracker.pde
 │   ├── EchoSystem.pde
 │   ├── NeonEffects.pde
-│   └── data/
+│   ├── code/        # onnxruntime-1.31.1.jar (손 추적 실행)
+│   └── data/        # 손 추적 ONNX 모델 두 개
 ├── docs/
 │   └── DEVELOPMENT.md
 ├── README.md
