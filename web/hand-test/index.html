@@ -135,7 +135,6 @@ const BONES = [0,1,1,2,2,3,3,4, 0,5,5,6,6,7,7,8, 5,9,9,10,10,11,11,12, 9,13,13,1
 // ── GestureRecognizer 상수 (슬라이더로 바뀐다) ──
 const GESTURE_DEFAULTS = { EXTEND_RATIO: 1.05, THUMB_OUT_RATIO: 0.55, PINCH_ON: 0.30, PINCH_OFF: 0.45, PINCH_INDEX_REACH: 0.7, HOLD_MS: 120 };
 const G = Object.assign({}, GESTURE_DEFAULTS);
-const SWIPE_START = 7, SWIPE_END = 4, VELOCITY_SMOOTH = 0.5, VELOCITY_HOLD_MS = 150, PAIR_SMOOTH = 0.5;
 const NONE = 0, OPEN = 1, FIST = 2, POINT = 3, VICTORY = 4, PINCH = 5;
 const NAMES = ["NONE", "OPEN", "FIST", "POINT", "VICTORY", "PINCH"];
 const LABELS = ["해당 없음", "손바닥 펴기", "주먹", "가리키기", "V 사인", "집기"];
@@ -390,16 +389,14 @@ function idx(w, h, x, y) { return (x < 0 || y < 0 || x >= w || y >= h) ? -1 : (y
 
 // ── GestureRecognizer ──
 class GestureRecognizer {
-  constructor() { this.states = new Map(); this.pair = { active: false, distance: 0, rate: 0, changedAt: 0, ids: "" }; }
-  reset() { this.states.clear(); this.pair = { active: false, distance: 0, rate: 0, changedAt: 0, ids: "" }; }
+  constructor() { this.states = new Map(); }
+  reset() { this.states.clear(); }
   update(hands, now) {
     const next = new Map();
     for (const hand of hands) {
       const s = this.states.get(hand.id) || { handId: hand.id, gesture: NONE, previous: NONE, raw: NONE, candidate: NONE,
-        candidateSince: now, changedAt: now, justChanged: false, pinched: false, extended: [], fingerRatio: [],
-        velX: 0, velY: 0, speed: 0, swiping: false, hasLast: false };
+        candidateSince: now, changedAt: now, justChanged: false, pinched: false, extended: [], fingerRatio: [] };
       this.measure(hand, s);
-      this.measureVelocity(s, now);
       s.raw = this.classify(s);
       s.justChanged = false;
       if (s.raw !== s.candidate) { s.candidate = s.raw; s.candidateSince = now; }
@@ -409,31 +406,6 @@ class GestureRecognizer {
       next.set(hand.id, s);
     }
     this.states = next;
-    this.measurePair(now);
-  }
-  measureVelocity(s, now) {
-    if (!s.hasLast) { s.hasLast = true; s.lastPalmX = s.palmX; s.lastPalmY = s.palmY; s.lastMoveAt = now; return; }
-    const dx = s.palmX - s.lastPalmX, dy = s.palmY - s.lastPalmY, dt = now - s.lastMoveAt;
-    if (dx !== 0 || dy !== 0) {
-      if (dt > 0) { s.velX += (dx * 1000 / dt - s.velX) * VELOCITY_SMOOTH; s.velY += (dy * 1000 / dt - s.velY) * VELOCITY_SMOOTH; }
-      s.lastPalmX = s.palmX; s.lastPalmY = s.palmY; s.lastMoveAt = now;
-    } else if (dt > VELOCITY_HOLD_MS) { s.velX *= 0.5; s.velY *= 0.5; }
-    s.speed = Math.hypot(s.velX, s.velY) / s.palmSize;
-    s.swiping = s.swiping ? s.speed > SWIPE_END : s.speed > SWIPE_START;
-  }
-  measurePair(now) {
-    const list = [...this.states.values()], p = this.pair;
-    if (list.length !== 2) { p.active = false; p.rate = 0; p.ids = ""; return; }
-    const [a, b] = list, palm = Math.max(1, (a.palmSize + b.palmSize) / 2);
-    const distance = Math.hypot(a.palmX - b.palmX, a.palmY - b.palmY) / palm, ids = a.handId + "," + b.handId;
-    const same = p.active && p.ids === ids;
-    if (same && distance !== p.distance) {
-      const dt = now - p.changedAt;
-      if (dt > 0) p.rate += ((distance - p.distance) * 1000 / dt - p.rate) * PAIR_SMOOTH;
-      p.changedAt = now;
-    } else if (!same) { p.rate = 0; p.changedAt = now; }
-    else if (now - p.changedAt > VELOCITY_HOLD_MS) p.rate *= 0.5;
-    p.active = true; p.ids = ids; p.distance = distance;
   }
   measure(hand, s) {
     const palm = Math.max(hand.palmSize, 1), d = (a, b) => Math.hypot(hand.x[a] - hand.x[b], hand.y[a] - hand.y[b]);
@@ -572,11 +544,7 @@ function renderPanel() {
   panelAt = now;
   const box = $("hands");
   if (!latest.hands.length) { box.innerHTML = '<p class="none">잡힌 손이 없습니다.</p>'; return; }
-  const pair = gestures.pair;
-  const pairLine = pair.active
-    ? `<p class="hint" style="margin-bottom:10px">양손 거리 <b style="color:var(--fg)">${pair.distance.toFixed(1)}</b> 손바닥 · 변화 <b style="color:${Math.abs(pair.rate) >= 1.5 ? "var(--cyan)" : "var(--fg)"}">${pair.rate >= 0 ? "+" : ""}${pair.rate.toFixed(1)}</b>/초 ${pair.rate >= 1.5 ? "(벌림: 흩뿌리기)" : pair.rate <= -1.5 ? "(모음: 모으기)" : ""}</p>`
-    : "";
-  box.innerHTML = pairLine + latest.hands.map(hand => {
+  box.innerHTML = latest.hands.map(hand => {
     const s = gestures.states.get(hand.id);
     if (!s) return "";
     const ink = hand.id % 2 === 1 ? "var(--cyan)" : "var(--purple)";
@@ -587,7 +555,6 @@ function renderPanel() {
     }
     rows.push(meter("집기", s.pinchDistance, 1.2, G.PINCH_ON, s.pinched));
     rows.push(meter("검지거리", s.indexReach, 1.6, G.PINCH_INDEX_REACH, s.indexReach > G.PINCH_INDEX_REACH));
-    rows.push(meter("휘두르기", s.speed, 20, SWIPE_START, s.swiping));
     const raw = s.raw !== s.gesture ? ` <span style="color:var(--muted)">(${LABELS[s.raw]})</span>` : "";
     return `<div class="hand"><div class="hand-head"><span class="dot" style="background:${ink}"></span>
       #${hand.id} ${hand.rightHand ? "오른손" : "왼손"} · 신뢰도 ${hand.score.toFixed(2)}${raw}

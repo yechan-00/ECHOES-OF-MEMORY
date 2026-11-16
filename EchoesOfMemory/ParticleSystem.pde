@@ -63,11 +63,7 @@ class ParticleSystem {
   static final int FIELD_PUSH = 0;     // 중심에서 바깥으로 민다 (손바닥 바람, 검지 끝)
   static final int FIELD_GATHER = 1;   // 중심으로 끌어와 입자마다 다른 거리(core 안)에 머물게 한다 (집기, 주먹)
   static final int FIELD_BURST = 2;    // 그 프레임에 한 번만 바깥으로 튕긴다 (집기·주먹을 놓는 순간)
-  static final int FIELD_SWEEP = 3;    // 정해진 방향으로 쓸어낸다 (휘두르기)
-  // SWEEP이 진행 방향 말고 바깥으로도 미는 비율. 손이 지나간 선 위에 입자가 남지 않게 한다.
-  static final float SWEEP_RADIAL = 0.4;
-  // 손마다 손동작·휘두르기·터짐 3개, 양손 1개, 이어서 미는 터짐 최대 4개
-  static final int MAX_HAND_FIELDS = 12;
+  static final int MAX_HAND_FIELDS = 8;
   // GATHER가 core보다 안쪽 입자를 밖으로 미는 정도. 0이면 한 점으로 뭉친다.
   static final float GATHER_INNER_PUSH = 0.35;
 
@@ -130,8 +126,6 @@ class ParticleSystem {
   float[] handS = new float[MAX_HAND_FIELDS];
   float[] handCore = new float[MAX_HAND_FIELDS];
   float[] handSwirl = new float[MAX_HAND_FIELDS];
-  float[] handDirX = new float[MAX_HAND_FIELDS];
-  float[] handDirY = new float[MAX_HAND_FIELDS];
   int handFieldCount = 0;
   float handAddX = 0;
   float handAddY = 0;
@@ -205,19 +199,6 @@ class ParticleSystem {
     handS[f] = strength;
     handCore[f] = core;
     handSwirl[f] = swirl;
-    handDirX[f] = 0;
-    handDirY[f] = 0;
-  }
-
-  // 휘두르기: (dirX, dirY) 방향(단위 벡터, 화면 기준)으로 쓸어낸다.
-  void addSweepField(float x, float y, float radius, float strength, float dirX, float dirY) {
-    float len = (float) Math.sqrt(dirX * dirX + dirY * dirY);
-    if (len < 0.0001f) return;
-    int before = handFieldCount;
-    addHandField(FIELD_SWEEP, x, y, radius, strength, 0, 0);
-    if (handFieldCount == before) return;
-    handDirX[before] = dirX / len;
-    handDirY[before] = dirY / len;
   }
 
   void setMotionScale(float scale) {
@@ -579,11 +560,6 @@ class ParticleSystem {
         handAddX += -dirY * spin;
         handAddY += dirX * spin;
         hit = edge;
-      } else if (kind == FIELD_SWEEP) {
-        float power = handS[f] * fall * fall;
-        handAddX += (handDirX[f] + dirX * SWEEP_RADIAL) * power;
-        handAddY += (handDirY[f] + dirY * SWEEP_RADIAL) * power;
-        hit = fall * RELEASE_GAIN;
       } else {
         float impulse = handS[f] * fall;
         particle.velocity.x += dirX * impulse;
@@ -631,7 +607,7 @@ class ParticleSystem {
     String stats = count + " particles    " + drawn + " shown    " + (int) app.frameRate + " fps";
     String motion = motionLabel();
     String state = backgroundMask == null ? "" : backgroundMask.statusLabel();
-    String keys = "P Portrait    1 Sparse    2 Balanced    Space    Mouse    G Motion    T Hands    E Echo    N Neon    B V C R M H";
+    String keys = "P Portrait    1 Sparse    2 Balanced    Space    Mouse    G Motion    T Hands    B V C R M H";
 
     app.noStroke();
     app.rectMode(PApplet.CORNER);

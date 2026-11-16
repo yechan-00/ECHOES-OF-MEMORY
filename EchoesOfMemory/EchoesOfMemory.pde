@@ -1,7 +1,7 @@
 // ECHOES OF MEMORY
 // 파티클 초상화, 기준 배경 차분, 스프링 복원, 움직임 감지, 손 추적(관절 21개, 양손).
-// 손동작 판별(펴기, 주먹, 가리키기, V 사인, 집기, 휘두르기, 양손 거리)과 파티클 효과.
-// 잔상(큰 움직임과 V 사인으로 과거 모습 소환)과 흩어지는 입자의 네온 발광.
+// 손동작 판별(펴기, 주먹, 가리키기, V 사인, 집기)과 파티클 효과(바람, 가르기와 궤적, 끌어모으기, 압축, 터뜨리기).
+// 잔상과 네온은 아직 만들지 않는다.
 // 프레임은 CameraManager.update()에서 한 번만 읽는다.
 
 CameraManager camera;
@@ -11,8 +11,6 @@ MotionDetector motion;
 HandTracker handTracker;
 GestureRecognizer gestures;
 HandEffects handEffects;
-EchoSystem echoes;
-NeonEffects neon;
 boolean particleMode = false;
 boolean maskDebug = false;
 boolean spaceScatter = false;
@@ -40,8 +38,6 @@ void setup() {
     particles = new ParticleSystem(this);
     backgroundMask = new BackgroundMask(this);
     if (ENABLE_MOTION_DETECTION) motion = new MotionDetector(this, camera);
-    echoes = new EchoSystem(this);
-    neon = new NeonEffects(this);
   } catch (Throwable problem) {
     println("[INIT] setup failed: " + problem.getClass().getName() + ": " + problem.getMessage());
     problem.printStackTrace();
@@ -96,12 +92,8 @@ void draw() {
     else particles.clearMotion();
     if (handEffects != null) handEffects.apply(particles, gestures, camera);
     particles.update(camera, backgroundMask);
-    echoes.update(particles, ENABLE_MOTION_DETECTION ? motion : null, gestures);
     if (maskDebug && backgroundMask.isReady()) backgroundMask.drawMask(camera);
     else {
-      // 뒤에서부터: 잔상, 네온 번짐, 지금 모습, 손 효과(궤적·집기 빛)
-      echoes.draw();
-      neon.draw(particles);
       particles.draw();
       if (handEffects != null) handEffects.draw();
     }
@@ -173,18 +165,7 @@ void keyPressed() {
     maskDebug = !maskDebug;
     return;
   }
-  if (command == 'e') {
-    // V 사인 없이 잔상을 바로 소환한다 (시험용)
-    echoes.summon(millis());
-    return;
-  }
-  if (command == 'n') {
-    neon.enabled = !neon.enabled;
-    println("[NEON] " + (neon.enabled ? "on" : "off"));
-    return;
-  }
   camera.handleKey(command);
-  if (command == 'c' || command == 'r') echoes.reset();
   if (motion != null) {
     motion.handleKey(command);
     if (command == 'c' || command == 'r') motion.reset();
@@ -213,8 +194,6 @@ char commandKey() {
   if (keyCode == 'R') return 'r';
   if (keyCode == 'M') return 'm';
   if (keyCode == 'T') return 't';
-  if (keyCode == 'E') return 'e';
-  if (keyCode == 'N') return 'n';
   if (keyCode == '[') return '[';
   if (keyCode == ']') return ']';
   return 0;

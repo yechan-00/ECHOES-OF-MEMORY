@@ -10,9 +10,7 @@
 //   PINCH    집은 지점으로 입자를 끌어모아 소용돌이치게 한다 (GATHER + swirl)
 //   FIST     손바닥 중심으로 입자를 압축해 붙잡는다 (GATHER, 강하게)
 //   PINCH·FIST를 놓는 순간  모았던 입자를 튕겨 흩뿌린다 (BURST). 오래 쥘수록 세다
-//   휘두르기  손바닥이 빠르게 움직이면 그 방향으로 쓸어낸다 (SWEEP). 쥐고 있을 때는 걸지 않는다
-//   양손      두 손을 빠르게 벌리면 가운데서 흩뿌리고(PUSH), 모으면 가운데로 모은다(GATHER)
-//   VICTORY  잔상 소환. EchoSystem이 직접 읽는다
+//   VICTORY  아직 효과 없음 (4단계)
 //
 // 크기는 모두 손바닥 크기(손목→중지 뿌리) 배수다. 손이 카메라에 가까우면 효과도 커진다.
 // 좌표는 GestureRecognizer의 원본 프레임 좌표를 CameraManager.frameToScreenX/Y()로 바꿔 쓴다.
@@ -45,15 +43,6 @@ class HandEffects {
   static final float BURST_MIN = 0.35f;         // 짧게 쥐었다 놓아도 이만큼은 터진다
   static final int BURST_FULL_HOLD_MS = 900;    // 이만큼 쥐면 최대 세기
   static final int MAX_BURSTS = 4;
-  // 휘두르기: 손바닥이 움직이는 방향으로 쓸어낸다. 주먹·집기 중에는 모은 입자를 데려가므로 걸지 않는다
-  static final float SWIPE_RADIUS = 1.8f;
-  static final float SWIPE_FORCE = 3.5f;
-  static final float SWIPE_FULL_SPEED = 16f;    // 이 빠르기(초당 손바닥 몇 개)에서 최대 세기
-  // 양손: 빠르게 벌리면 가운데서 흩뿌리고, 빠르게 모으면 가운데로 모은다
-  static final float PAIR_RATE_MIN = 1.5f;      // 초당 손바닥 몇 개만큼 거리가 변해야 반응하는지
-  static final float PAIR_RATE_FULL = 6f;
-  static final float PAIR_FORCE = 3.5f;
-  static final float PAIR_CORE = 0.6f;          // 모을 때 머무는 반지름 (× 손바닥 크기)
   // 손이 잡혀 있는 동안 움직임 감지 힘에 곱하는 값
   static final float MOTION_SCALE_WITH_HANDS = 0.3f;
 
@@ -133,16 +122,6 @@ class HandEffects {
           palm * FIST_CORE, 0);
       }
 
-      boolean holding = gesture == GestureRecognizer.PINCH || gesture == GestureRecognizer.FIST;
-      if (state.swiping && !holding) {
-        // 프레임 방향을 화면 방향으로 바꾼다 (거울 반전이면 x가 뒤집힌다)
-        float aheadX = camera.frameToScreenX(state.palmX + state.velX * 0.05f) - palmX;
-        float aheadY = camera.frameToScreenY(state.palmY + state.velY * 0.05f) - palmY;
-        float amount = Math.min(1f, (state.speed - GestureRecognizer.SWIPE_END)
-          / (SWIPE_FULL_SPEED - GestureRecognizer.SWIPE_END));
-        particles.addSweepField(palmX, palmY, palm * SWIPE_RADIUS, SWIPE_FORCE * amount, aheadX, aheadY);
-      }
-
       // 집기 직전부터 집는 동안 엄지와 검지 사이에 빛을 모은다
       if (glowCount < glowX.length && (state.pinchStrength > 0.05f || gesture == GestureRecognizer.PINCH)) {
         glowX[glowCount] = pinchX;
@@ -152,28 +131,6 @@ class HandEffects {
         glowHeld[glowCount] = gesture == GestureRecognizer.PINCH;
         glowCount++;
       }
-    }
-    applyPair(particles, gestures, camera, unit);
-  }
-
-  // 양손 사이 거리가 빠르게 변할 때만 반응한다. 한 손이라도 쥐고 있으면 걸지 않는다.
-  void applyPair(ParticleSystem particles, GestureRecognizer gestures, CameraManager camera, float unit) {
-    if (!gestures.pairActive) return;
-    for (HandGesture state : gestures.states) {
-      if (state.gesture == GestureRecognizer.PINCH || state.gesture == GestureRecognizer.FIST) return;
-    }
-    float rate = gestures.pairRate;
-    float speed = Math.abs(rate);
-    if (speed < PAIR_RATE_MIN) return;
-    float amount = Math.min(1f, (speed - PAIR_RATE_MIN) / (PAIR_RATE_FULL - PAIR_RATE_MIN));
-    float midX = camera.frameToScreenX(gestures.pairMidX);
-    float midY = camera.frameToScreenY(gestures.pairMidY);
-    float palm = gestures.pairPalm * unit;
-    float radius = gestures.pairPixels * unit / 2f + palm;
-    if (rate > 0) {
-      particles.addHandField(ParticleSystem.FIELD_PUSH, midX, midY, radius, PAIR_FORCE * amount, 0, 0);
-    } else {
-      particles.addHandField(ParticleSystem.FIELD_GATHER, midX, midY, radius, PAIR_FORCE * amount, palm * PAIR_CORE, 0);
     }
   }
 
