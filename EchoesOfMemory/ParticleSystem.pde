@@ -28,13 +28,20 @@ class ParticleSystem {
   static final float MOTION_MIN_INTENSITY = 0.12;
   static final float MOTION_FORCE = 2.8;
   static final float MOTION_RADIUS = 48;
-  static final float MOTION_TWIST = 0.35;
+  // 카메라 프레임마다 깜빡이는 감지 칸을 부드럽게 이어 준다. 60fps 한 프레임 기준 비율이다.
+  // 켜질 때는 빠르게 따라가고, 꺼질 때는 몇 프레임에 걸쳐 줄어 힘이 뚝 끊기지 않는다.
+  static final float MOTION_ATTACK = 0.6;
+  static final float MOTION_DECAY = 0.2;
   // 움직이는 방향으로 쓸어내는 힘. motion.speed()가 SWEEP_MIN_SPEED 이상일 때만 걸린다.
   // 전체 화면 실측(2026-11-10, Windows): 손을 흔들 때 speed 평균 약 18, 크게 휘두르면 60~110.
-  static final float MOTION_SWEEP = 5.0;
+  // 앞으로 쓸어내는 힘이 크면 손이 지나간 선 위의 입자가 손을 따라 밀려가 그 선 위에 다시 남는다.
+  // 그래서 쓸기는 약하게 두고, 바깥으로 미는 힘은 빠르게 움직여도 줄이지 않는다.
+  static final float MOTION_SWEEP = 2.5;
   static final float MOTION_SWEEP_MIN_SPEED = 4;     // px/카메라 프레임
   static final float MOTION_SWEEP_FULL_SPEED = 25;   // 이 속도에서 쓸어내는 힘이 최대가 된다
-  static final float MOTION_RADIAL_KEEP = 0.6;       // 쓸어낼 때 바깥으로 미는 힘을 남기는 비율
+  static final float MOTION_RADIAL_KEEP = 1.0;       // 쓸어낼 때 바깥으로 미는 힘을 남기는 비율
+  // 움직이는 동안 바깥 방향을 진행 방향의 좌우로 얼마나 꺾을지. 지나간 자리를 갈라 비운다.
+  static final float MOTION_PART = 0.5;
   // 움직임 힘에 맞은 입자는 스프링이 풀려 밀려난 자리에 머물다 돌아온다.
   static final float RELEASE_SECONDS = 1.6;   // release가 1에서 0으로 돌아오는 시간
   static final float RELEASE_GAIN = 2.5;      // 감쇠(falloff)에 곱한다. 국소 중심 가까이는 바로 1이 된다
@@ -94,6 +101,8 @@ class ParticleSystem {
   float[] motionOriginY = new float[0];
   float[] motionPeak = new float[0];
   int[] motionTouch = new int[0];
+  float[] motionSmooth = new float[0];   // 칸별 강도를 시간에 따라 부드럽게 만든 값
+  int lastMotionAt = 0;
   float motionAddX = 0;
   float motionAddY = 0;
   float motionHit = 0;        // accumulateMotion이 계산한 감쇠. release에 쓴다
@@ -157,6 +166,8 @@ class ParticleSystem {
   void clearMotion() {
     motionHot = false;
     clearMotionField();
+    for (int i = 0; i < motionSmooth.length; i++) motionSmooth[i] = 0;
+    lastMotionAt = 0;
   }
 
   // 칸마다 한 번만 힘을 펼치고, 파티클은 home이 속한 칸을 한 번 읽는다.
@@ -177,11 +188,25 @@ class ParticleSystem {
     if (reach < 1) reach = 1;
     float[] source = motion.grid;
 
+    int now = app.millis();
+    float step = lastMotionAt == 0 ? 1 : (now - lastMotionAt) / (1000f / 60f);
+    lastMotionAt = now;
+    if (step < 0) step = 1;
+    if (step > 3) step = 3;
+    float attack = 1f - (float) Math.pow(1f - MOTION_ATTACK, step);
+    float decay = 1f - (float) Math.pow(1f - MOTION_DECAY, step);
+
     for (int row = 0; row < rows; row++) {
       int rowIndex = row * cols;
       float sourceY = (row + 0.5f) * cell;
       for (int col = 0; col < cols; col++) {
-        float intensity = source[rowIndex + col];
+        int sourceIndex = rowIndex + col;
+        float raw = source[sourceIndex];
+        float smooth = motionSmooth[sourceIndex];
+        smooth += (raw - smooth) * (raw > smooth ? attack : decay);
+        if (smooth < 0.01f) smooth = 0;
+        motionSmooth[sourceIndex] = smooth;
+        float intensity = smooth;
         if (intensity < MOTION_MIN_INTENSITY) continue;
         float sourceX = (col + 0.5f) * cell;
         int row0 = row - reach;
@@ -218,7 +243,7 @@ class ParticleSystem {
     motionHot = motionTouched > 0;
   }
 
-  // 빠를수록 바깥으로 퍼지는 힘을 줄이고 움직이는 방향으로 쓸어낸다.
+  // 빠를수록 움직이는 방향으로 더 쓸어낸다. MOTION_RADIAL_KEEP이 1보다 작으면 바깥으로 퍼지는 힘도 그만큼 줄인다.
   void prepareSweep(MotionDetector motion) {
     sweepX = 0;
     sweepY = 0;
@@ -520,12 +545,14 @@ class ParticleSystem {
     motionOriginY = new float[needed];
     motionPeak = new float[needed];
     motionTouch = new int[needed];
+    motionSmooth = new float[needed];
     motionCols = cols;
     motionRows = rows;
     motionTouched = 0;
   }
 
   // home이 속한 칸의 국소 중심에서 바깥으로 밀고, motion.velocity 방향으로 쓸어낸다.
+  // 입자마다 다른 회전(twist)과 크기별 힘 차이를 두지 않아, 같은 자리의 입자는 같은 방향으로 고르게 밀린다.
   void accumulateMotion(Particle particle) {
     motionAddX = 0;
     motionAddY = 0;
@@ -543,24 +570,42 @@ class ParticleSystem {
     float centerY = motionOriginY[index] / weight;
     float dx = particle.home.x - centerX;
     float dy = particle.home.y - centerY;
-    float twist = particle.jitterX * MOTION_TWIST;
-    float rx = dx - dy * twist;
-    float ry = dy + dx * twist;
-    float mag2 = rx * rx + ry * ry;
-    if (mag2 < 1f) {
-      rx = particle.jitterX;
-      ry = particle.jitterY;
-      mag2 = rx * rx + ry * ry;
-      if (mag2 < 0.01f) mag2 = 0.01f;
-    }
     float dist = (float) Math.sqrt(dx * dx + dy * dy);
     if (dist > MOTION_RADIUS) return;
     float falloff = 1f - dist / MOTION_RADIUS;
     falloff *= falloff;
-    float inv = 1f / (float) Math.sqrt(mag2);
-    float power = MOTION_FORCE * peak * falloff * (0.85f + 0.3f * particle.sizeBias) * radialScale;
-    motionAddX = rx * inv * power + sweepX * peak * falloff;
-    motionAddY = ry * inv * power + sweepY * peak * falloff;
+
+    // 국소 중심과 거의 겹치면 바깥 방향이 정해지지 않는다. 임의 방향은 쓰지 않는다.
+    float dirX = 0;
+    float dirY = 0;
+    if (dist >= 1f) {
+      dirX = dx / dist;
+      dirY = dy / dist;
+    }
+
+    // 손이 지나가는 선 위의 입자는 바깥 방향이 진행 방향과 거의 같아, 손을 따라 앞으로만 밀리고 선 위에 남는다.
+    // 진행 방향의 좌우 중 가까운 쪽으로 꺾어 길을 가른다. 정확히 선 위면 입자 고유값으로 쪽을 고른다.
+    float sweepLen = (float) Math.sqrt(sweepX * sweepX + sweepY * sweepY);
+    if (MOTION_PART > 0 && sweepLen > 0.001f) {
+      float sideX = -sweepY / sweepLen;
+      float sideY = sweepX / sweepLen;
+      float across = dirX * sideX + dirY * sideY;
+      float side = across > 0.05f ? 1 : (across < -0.05f ? -1 : (particle.jitterX >= 0 ? 1 : -1));
+      float bend = sweepLen / (MOTION_SWEEP * 0.3f);
+      if (bend > 1) bend = 1;
+      bend *= MOTION_PART;
+      float bentX = dirX * (1f - bend) + sideX * side * bend;
+      float bentY = dirY * (1f - bend) + sideY * side * bend;
+      float bentLen = (float) Math.sqrt(bentX * bentX + bentY * bentY);
+      if (bentLen > 0.0001f) {
+        dirX = bentX / bentLen;
+        dirY = bentY / bentLen;
+      }
+    }
+
+    float power = MOTION_FORCE * peak * falloff * radialScale;
+    motionAddX = dirX * power + sweepX * peak * falloff;
+    motionAddY = dirY * power + sweepY * peak * falloff;
     motionHit = falloff;
   }
 
