@@ -66,7 +66,7 @@ class ParticleSystem {
   static final int FIELD_SWEEP = 3;    // 정해진 방향으로 쓸어낸다 (휘두르기)
   // SWEEP이 진행 방향 말고 바깥으로도 미는 비율. 손이 지나간 선 위에 입자가 남지 않게 한다.
   static final float SWEEP_RADIAL = 0.4;
-  // 손마다 손동작·휘두르기·터짐 3개, 양손 1개, 이어서 미는 터짐 최대 4개
+  // 손마다 손동작·휘두르기·터짐 3개, 양손 1개, 이어서 미는 터짐 최대 4개 (양손 실은 손마다의 집기 2개를 대신한다)
   static final int MAX_HAND_FIELDS = 12;
   // GATHER가 core보다 안쪽 입자를 밖으로 미는 정도. 0이면 한 점으로 뭉친다.
   static final float GATHER_INNER_PUSH = 0.35;
@@ -132,6 +132,9 @@ class ParticleSystem {
   float[] handSwirl = new float[MAX_HAND_FIELDS];
   float[] handDirX = new float[MAX_HAND_FIELDS];
   float[] handDirY = new float[MAX_HAND_FIELDS];
+  // 힘의 중심은 (handX, handY)~(handX2, handY2) 선분이다. 점 힘은 두 끝이 같다.
+  float[] handX2 = new float[MAX_HAND_FIELDS];
+  float[] handY2 = new float[MAX_HAND_FIELDS];
   int handFieldCount = 0;
   float handAddX = 0;
   float handAddY = 0;
@@ -207,6 +210,19 @@ class ParticleSystem {
     handSwirl[f] = swirl;
     handDirX[f] = 0;
     handDirY[f] = 0;
+    handX2[f] = x;
+    handY2[f] = y;
+  }
+
+  // (x1, y1)~(x2, y2) 선분을 중심으로 하는 힘. 입자는 선분에서 가장 가까운 점을 기준으로 밀리거나 끌린다.
+  // GATHER면 선을 따라 실처럼 모이고, BURST·PUSH면 선 전체에서 바깥으로 튕긴다 (양손 집기).
+  void addLineField(int kind, float x1, float y1, float x2, float y2, float radius, float strength, float core) {
+    if (x2 != x2 || y2 != y2) return;
+    int before = handFieldCount;
+    addHandField(kind, x1, y1, radius, strength, core, 0);
+    if (handFieldCount == before) return;
+    handX2[before] = x2;
+    handY2[before] = y2;
   }
 
   // 휘두르기: (dirX, dirY) 방향(단위 벡터, 화면 기준)으로 쓸어낸다.
@@ -539,8 +555,21 @@ class ParticleSystem {
     float px = particle.position.x;
     float py = particle.position.y;
     for (int f = 0; f < handFieldCount; f++) {
-      float dx = px - handX[f];
-      float dy = py - handY[f];
+      // 선분 위에서 가장 가까운 점. 점 힘이면 그 점 자체다
+      float cx = handX[f];
+      float cy = handY[f];
+      float sx = handX2[f] - cx;
+      float sy = handY2[f] - cy;
+      float len2 = sx * sx + sy * sy;
+      if (len2 > 0.01f) {
+        float t = ((px - cx) * sx + (py - cy) * sy) / len2;
+        if (t < 0) t = 0;
+        if (t > 1) t = 1;
+        cx += sx * t;
+        cy += sy * t;
+      }
+      float dx = px - cx;
+      float dy = py - cy;
       float radius = handR[f];
       float d2 = dx * dx + dy * dy;
       if (d2 >= radius * radius) continue;

@@ -12,6 +12,8 @@
 //   PINCH·FIST를 놓는 순간  모았던 입자를 튕겨 흩뿌린다 (BURST). 오래 쥘수록 세다
 //   휘두르기  손바닥이 빠르게 움직이면 그 방향으로 쓸어낸다 (SWEEP). 쥐고 있을 때는 걸지 않는다
 //   양손      두 손을 빠르게 벌리면 가운데서 흩뿌리고(PUSH), 모으면 가운데로 모은다(GATHER)
+//   양손 집기  두 집은 점 사이 선 위로 입자를 끌어모아 실처럼 늘어뜨린다 (선 GATHER).
+//             한 손이라도 놓으면 실 전체가 튕기듯 흩어진다 (선 BURST). 손마다의 집기 소용돌이는 쓰지 않는다
 //   VICTORY  아직 효과 없음 (잔상은 아직 넣지 않았다)
 //
 // 크기는 모두 손바닥 크기(손목→중지 뿌리) 배수다. 손이 카메라에 가까우면 효과도 커진다.
@@ -54,6 +56,10 @@ class HandEffects {
   static final float PAIR_RATE_FULL = 6f;
   static final float PAIR_FORCE = 3.5f;
   static final float PAIR_CORE = 0.6f;          // 모을 때 머무는 반지름 (× 손바닥 크기)
+  // 양손 집기: 두 집은 점 사이의 실
+  static final float THREAD_RADIUS = 0.9f;      // 선에서 이 거리 안의 입자를 끌어온다 (× 손바닥 크기)
+  static final float THREAD_FORCE = 3.0f;
+  static final float THREAD_CORE = 0.12f;       // 실의 굵기 (× 손바닥 크기)
   // 손이 잡혀 있는 동안 움직임 감지 힘에 곱하는 값
   static final float MOTION_SCALE_WITH_HANDS = 0.3f;
 
@@ -78,10 +84,18 @@ class HandEffects {
   // 놓은 뒤 이어서 미는 중인 터짐 (화면 좌표)
   float[] burstX = new float[MAX_BURSTS];
   float[] burstY = new float[MAX_BURSTS];
+  float[] burstX2 = new float[MAX_BURSTS];      // 실이 터질 때는 선분, 아니면 burstX/Y와 같다
+  float[] burstY2 = new float[MAX_BURSTS];
   float[] burstR = new float[MAX_BURSTS];
   float[] burstScale = new float[MAX_BURSTS];
   int[] burstStart = new int[MAX_BURSTS];
   int burstCount = 0;
+  // 양손 실 (화면 좌표). 지난 프레임 값을 남겨 두었다가 놓는 순간 그 자리에서 터뜨린다
+  boolean threadActive = false;
+  float threadX1, threadY1, threadX2, threadY2, threadPalm;
+  int threadStart = 0;
+  // 실을 만들었던 손. 이 손이 집기를 놓을 때는 한 점 터짐을 따로 내지 않는다
+  int[] threadIds = {-1, -1};
 
   HandEffects(PApplet app) {
     this.app = app;
@@ -98,6 +112,16 @@ class HandEffects {
     int now = app.millis();
     continueBursts(particles, now);
 
+    // 두 손이 모두 집고 있으면 실을 만든다
+    HandGesture threadA = null;
+    HandGesture threadB = null;
+    for (HandGesture state : states) {
+      if (state.gesture != GestureRecognizer.PINCH) continue;
+      if (threadA == null) threadA = state;
+      else if (threadB == null) threadB = state;
+    }
+    boolean threadNow = threadB != null;
+
     for (HandGesture state : states) {
       float palm = state.palmSize * unit;
       float swirlSign = state.handId % 2 == 1 ? 1 : -1;
@@ -107,14 +131,19 @@ class HandEffects {
       float pinchY = camera.frameToScreenY(state.pinchY);
 
       // 놓는 순간: 바로 전 손동작이 모으기였으면 그 자리에서 터뜨린다
-      if (state.justChanged && (state.previous == GestureRecognizer.PINCH || state.previous == GestureRecognizer.FIST)) {
+      boolean wasThread = state.handId == threadIds[0] || state.handId == threadIds[1];
+      if (wasThread && state.gesture != GestureRecognizer.PINCH) {
+        // 실은 아래에서 통째로 터뜨렸다
+        if (state.handId == threadIds[0]) threadIds[0] = -1;
+        else threadIds[1] = -1;
+      } else if (state.justChanged && (state.previous == GestureRecognizer.PINCH || state.previous == GestureRecognizer.FIST)) {
         float held = Math.min(1f, state.previousHeldMs / (float) BURST_FULL_HOLD_MS);
         float scale = BURST_MIN + (1f - BURST_MIN) * held;
         boolean wasPinch = state.previous == GestureRecognizer.PINCH;
         float bx = wasPinch ? pinchX : palmX;
         float by = wasPinch ? pinchY : palmY;
         particles.addHandField(ParticleSystem.FIELD_BURST, bx, by, palm * BURST_RADIUS, BURST_IMPULSE * scale, 0, 0);
-        startBurst(bx, by, palm * BURST_RADIUS * BURST_PUSH_REACH, scale, now);
+        startBurst(bx, by, bx, by, palm * BURST_RADIUS * BURST_PUSH_REACH, scale, now);
       }
 
       int gesture = state.gesture;
@@ -125,7 +154,7 @@ class HandEffects {
         float tipY = camera.frameToScreenY(state.pointY);
         particles.addHandField(ParticleSystem.FIELD_PUSH, tipX, tipY, palm * POINT_RADIUS, POINT_FORCE, 0, 0);
         trailFor(state.handId).add(tipX, tipY, now);
-      } else if (gesture == GestureRecognizer.PINCH) {
+      } else if (gesture == GestureRecognizer.PINCH && !threadNow) {
         particles.addHandField(ParticleSystem.FIELD_GATHER, pinchX, pinchY, palm * PINCH_RADIUS, PINCH_FORCE,
           palm * PINCH_CORE, PINCH_SWIRL * swirlSign);
       } else if (gesture == GestureRecognizer.FIST) {
@@ -153,7 +182,35 @@ class HandEffects {
         glowCount++;
       }
     }
+    applyThread(particles, camera, unit, threadA, threadB, now);
     applyPair(particles, gestures, camera, unit);
+  }
+
+  // 양손 집기: 집는 동안 두 집은 점 사이 선으로 입자를 모으고, 실이 끊기는 순간 선 전체를 터뜨린다.
+  void applyThread(ParticleSystem particles, CameraManager camera, float unit, HandGesture a, HandGesture b, int now) {
+    if (b != null) {
+      if (!threadActive) {
+        threadStart = now;
+        threadIds[0] = a.handId;
+        threadIds[1] = b.handId;
+      }
+      threadActive = true;
+      threadX1 = camera.frameToScreenX(a.pinchX);
+      threadY1 = camera.frameToScreenY(a.pinchY);
+      threadX2 = camera.frameToScreenX(b.pinchX);
+      threadY2 = camera.frameToScreenY(b.pinchY);
+      threadPalm = (a.palmSize + b.palmSize) * 0.5f * unit;
+      particles.addLineField(ParticleSystem.FIELD_GATHER, threadX1, threadY1, threadX2, threadY2,
+        threadPalm * THREAD_RADIUS, THREAD_FORCE, threadPalm * THREAD_CORE);
+      return;
+    }
+    if (!threadActive) return;
+    threadActive = false;
+    float held = Math.min(1f, (now - threadStart) / (float) BURST_FULL_HOLD_MS);
+    float scale = BURST_MIN + (1f - BURST_MIN) * held;
+    particles.addLineField(ParticleSystem.FIELD_BURST, threadX1, threadY1, threadX2, threadY2,
+      threadPalm * BURST_RADIUS, BURST_IMPULSE * scale, 0);
+    startBurst(threadX1, threadY1, threadX2, threadY2, threadPalm * BURST_RADIUS * BURST_PUSH_REACH, scale, now);
   }
 
   // 양손 사이 거리가 빠르게 변할 때만 반응한다. 한 손이라도 쥐고 있으면 걸지 않는다.
@@ -177,12 +234,14 @@ class HandEffects {
     }
   }
 
-  void startBurst(float x, float y, float radius, float scale, int now) {
+  void startBurst(float x, float y, float x2, float y2, float radius, float scale, int now) {
     if (burstCount >= MAX_BURSTS) {
       // 가장 오래된 것을 버린다
       for (int i = 1; i < burstCount; i++) {
         burstX[i - 1] = burstX[i];
         burstY[i - 1] = burstY[i];
+        burstX2[i - 1] = burstX2[i];
+        burstY2[i - 1] = burstY2[i];
         burstR[i - 1] = burstR[i];
         burstScale[i - 1] = burstScale[i];
         burstStart[i - 1] = burstStart[i];
@@ -191,6 +250,8 @@ class HandEffects {
     }
     burstX[burstCount] = x;
     burstY[burstCount] = y;
+    burstX2[burstCount] = x2;
+    burstY2[burstCount] = y2;
     burstR[burstCount] = radius;
     burstScale[burstCount] = scale;
     burstStart[burstCount] = now;
@@ -202,9 +263,12 @@ class HandEffects {
     for (int i = 0; i < burstCount; i++) {
       float t = (now - burstStart[i]) / (float) BURST_PUSH_MS;
       if (t >= 1) continue;
-      particles.addHandField(ParticleSystem.FIELD_PUSH, burstX[i], burstY[i], burstR[i], BURST_PUSH * burstScale[i] * (1f - t), 0, 0);
+      particles.addLineField(ParticleSystem.FIELD_PUSH, burstX[i], burstY[i], burstX2[i], burstY2[i], burstR[i],
+        BURST_PUSH * burstScale[i] * (1f - t), 0);
       burstX[kept] = burstX[i];
       burstY[kept] = burstY[i];
+      burstX2[kept] = burstX2[i];
+      burstY2[kept] = burstY2[i];
       burstR[kept] = burstR[i];
       burstScale[kept] = burstScale[i];
       burstStart[kept] = burstStart[i];
@@ -233,6 +297,9 @@ class HandEffects {
     trails.clear();
     glowCount = 0;
     burstCount = 0;
+    threadActive = false;
+    threadIds[0] = -1;
+    threadIds[1] = -1;
   }
 
   // particles.draw() 다음에 호출한다.
@@ -252,6 +319,16 @@ class HandEffects {
     }
 
     float pulse = 0.5f + 0.5f * (float) Math.sin(now * 0.012f);
+    if (threadActive) {
+      // 실: 궤적과 같은 세 겹 선. 팽팽함을 보이도록 가볍게 맥박친다
+      float[] widths = {14f, 6f, 1.8f};
+      float[] alphas = {22f + 14f * pulse, 60f, 220f};
+      for (int pass = 0; pass < 3; pass++) {
+        app.strokeWeight(widths[pass]);
+        app.stroke(pass == 2 ? COLOR_CORE : COLOR_A, alphas[pass]);
+        app.line(threadX1, threadY1, threadX2, threadY2);
+      }
+    }
     app.noStroke();
     for (int g = 0; g < glowCount; g++) {
       float amount = glowAmount[g];
