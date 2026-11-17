@@ -18,24 +18,24 @@
 class HandEffects {
   // 손바닥 크기는 1 m 안쪽에서 640x480 프레임 기준 약 80~100 px, 전체 화면에서는 약 200 px이다.
   // 손바닥 바람
-  static final float OPEN_RADIUS = 1.8f;        // × 손바닥 크기
+  static final float OPEN_RADIUS = 1.0f;        // × 손바닥 크기
   static final float OPEN_FORCE = 3.2f;
   // 검지 가르기
-  static final float POINT_RADIUS = 0.5f;
+  static final float POINT_RADIUS = 0.35f;
   static final float POINT_FORCE = 4.0f;
   // 집기: 끌어모으기
-  static final float PINCH_RADIUS = 1.8f;
+  static final float PINCH_RADIUS = 1.1f;
   static final float PINCH_FORCE = 2.6f;
-  static final float PINCH_CORE = 0.4f;         // 모인 입자가 머무는 반지름 (× 손바닥 크기)
+  static final float PINCH_CORE = 0.3f;         // 모인 입자가 머무는 반지름 (× 손바닥 크기)
   static final float PINCH_SWIRL = 0.7f;        // 중심을 도는 힘. 손마다 반대 방향 (0.7이면 초당 약 1바퀴)
   // 주먹: 압축
-  static final float FIST_RADIUS = 1.6f;
+  static final float FIST_RADIUS = 1.0f;
   static final float FIST_FORCE = 4.5f;
-  static final float FIST_CORE = 0.35f;
+  static final float FIST_CORE = 0.25f;
   // 놓는 순간 터뜨리기
   // 입자 속도는 ParticleSystem.MAX_SPEED(16 px/프레임)에서 잘려, 한 번 튕기기만으로는 약 80 px밖에 못 간다.
   // 그래서 놓는 순간 튕긴 뒤 BURST_PUSH_MS 동안 바깥으로 계속 민다.
-  static final float BURST_RADIUS = 2.0f;
+  static final float BURST_RADIUS = 1.2f;
   static final float BURST_IMPULSE = 14f;       // 놓는 순간 속도에 더하는 양 (px/프레임)
   static final float BURST_PUSH = 4.0f;         // 이어서 미는 가속도. 시간이 지나며 0으로 줄어든다
   static final float BURST_PUSH_REACH = 1.6f;   // 미는 반지름 = BURST_RADIUS × 이 값 (퍼져 나가는 입자를 계속 민다)
