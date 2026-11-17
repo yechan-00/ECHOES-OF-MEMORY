@@ -43,6 +43,15 @@ class GestureRecognizer {
   static final float PINCH_INDEX_REACH = 0.7f;   // 검지 끝→손바닥 중심 / palmSize. 집기 시작에 필요한 최소값
   static final int HOLD_MS = 120;                // 판별이 이 시간 동안 같아야 gesture를 바꾼다
 
+  // 휘두르기: 손바닥 중심 속도를 "초당 손바닥 크기 몇 개"로 잰다. 1 m 안쪽에서 손바닥은 약 9 cm라
+  // 천천히 흔들기(0.5 m/s)가 약 5.5, 빠르게 휘두르기(1.5 m/s)가 약 16이다. 실측 전 추정값이다.
+  static final float SWIPE_START = 7f;           // 이보다 빠르면 휘두르기 시작
+  static final float SWIPE_END = 4f;             // 이보다 느려지면 끝
+  static final float VELOCITY_SMOOTH = 0.5f;     // 새 속도를 섞는 비율
+  static final int VELOCITY_HOLD_MS = 150;       // 손 위치가 이 시간 동안 안 바뀌면 속도를 줄인다
+  // 양손 거리: 두 손바닥 중심 사이 거리를 평균 손바닥 크기로 나눈 값의 변화 속도 (초당)
+  static final float PAIR_SMOOTH = 0.5f;
+
   final String[] NAMES = {"NONE", "OPEN", "FIST", "POINT", "VICTORY", "PINCH"};
   // 손가락별 관절 번호: 엄지, 검지, 중지, 약지, 새끼
   final int[] FINGER_PIP = {2, 6, 10, 14, 18};
@@ -55,6 +64,16 @@ class GestureRecognizer {
   PApplet app;
   ArrayList<HandGesture> states = new ArrayList<HandGesture>();
   PFont debugFont;
+
+  // 양손이 모두 잡혀 있을 때만 pairActive가 true다. 좌표는 원본 프레임 기준.
+  boolean pairActive = false;
+  float pairDistance = 0;        // 두 손바닥 중심 거리 / 평균 손바닥 크기
+  float pairRate = 0;            // pairDistance의 초당 변화. 벌리면 +, 모으면 -
+  float pairMidX = 0, pairMidY = 0;
+  float pairPixels = 0;          // 두 손바닥 중심 거리 (프레임 px)
+  float pairPalm = 0;            // 두 손의 평균 손바닥 크기 (프레임 px)
+  int pairChangedAt = 0;
+  int pairFirstId = -1, pairSecondId = -1;
 
   GestureRecognizer(PApplet app) {
     this.app = app;
@@ -71,6 +90,7 @@ class GestureRecognizer {
       HandGesture state = find(hand.id);
       if (state == null) state = new HandGesture(hand.id, now);
       measure(hand, state);
+      measureVelocity(state, now);
       int raw = classify(state);
       state.raw = raw;
       state.justChanged = false;
@@ -88,6 +108,77 @@ class GestureRecognizer {
       next.add(state);
     }
     states = next;
+    measurePair(now);
+  }
+
+  // 손 위치는 카메라 프레임마다(약 30 fps) 바뀌고 update()는 draw마다(60 fps) 불린다.
+  // 그래서 위치가 실제로 바뀐 때만 속도를 새로 구한다.
+  void measureVelocity(HandGesture state, int now) {
+    if (!state.hasLast) {
+      state.hasLast = true;
+      state.lastPalmX = state.palmX;
+      state.lastPalmY = state.palmY;
+      state.lastMoveAt = now;
+      return;
+    }
+    float dx = state.palmX - state.lastPalmX;
+    float dy = state.palmY - state.lastPalmY;
+    int dt = now - state.lastMoveAt;
+    if (dx != 0 || dy != 0) {
+      if (dt > 0) {
+        float vx = dx * 1000f / dt;
+        float vy = dy * 1000f / dt;
+        state.velX += (vx - state.velX) * VELOCITY_SMOOTH;
+        state.velY += (vy - state.velY) * VELOCITY_SMOOTH;
+      }
+      state.lastPalmX = state.palmX;
+      state.lastPalmY = state.palmY;
+      state.lastMoveAt = now;
+    } else if (dt > VELOCITY_HOLD_MS) {
+      state.velX *= 0.5f;
+      state.velY *= 0.5f;
+    }
+    state.speed = (float) Math.sqrt(state.velX * state.velX + state.velY * state.velY) / state.palmSize;
+    if (state.swiping) state.swiping = state.speed > SWIPE_END;
+    else state.swiping = state.speed > SWIPE_START;
+  }
+
+  void measurePair(int now) {
+    if (states.size() != 2) {
+      pairActive = false;
+      pairRate = 0;
+      pairFirstId = -1;
+      return;
+    }
+    HandGesture a = states.get(0);
+    HandGesture b = states.get(1);
+    float dx = a.palmX - b.palmX;
+    float dy = a.palmY - b.palmY;
+    float pixels = (float) Math.sqrt(dx * dx + dy * dy);
+    float palm = Math.max(1f, (a.palmSize + b.palmSize) / 2f);
+    float distance = pixels / palm;
+    boolean samePair = pairActive && pairFirstId == a.handId && pairSecondId == b.handId;
+    if (samePair && distance != pairDistance) {
+      int dt = now - pairChangedAt;
+      if (dt > 0) {
+        float rate = (distance - pairDistance) * 1000f / dt;
+        pairRate += (rate - pairRate) * PAIR_SMOOTH;
+      }
+      pairChangedAt = now;
+    } else if (!samePair) {
+      pairRate = 0;
+      pairChangedAt = now;
+    } else if (now - pairChangedAt > VELOCITY_HOLD_MS) {
+      pairRate *= 0.5f;
+    }
+    pairActive = true;
+    pairFirstId = a.handId;
+    pairSecondId = b.handId;
+    pairDistance = distance;
+    pairPixels = pixels;
+    pairPalm = palm;
+    pairMidX = (a.palmX + b.palmX) / 2f;
+    pairMidY = (a.palmY + b.palmY) / 2f;
   }
 
   HandGesture[] gestures() {
@@ -108,6 +199,9 @@ class GestureRecognizer {
 
   void reset() {
     states.clear();
+    pairActive = false;
+    pairRate = 0;
+    pairFirstId = -1;
   }
 
   // ── 측정 ──
@@ -199,11 +293,19 @@ class GestureRecognizer {
 
       String fingers = "";
       for (int f = 0; f < 5; f++) fingers += state.extended[f] ? "|" : ".";
-      String label = name(state.gesture) + (state.raw != state.gesture ? " (" + name(state.raw) + ")" : "") + "  " + fingers;
+      String label = name(state.gesture) + (state.raw != state.gesture ? " (" + name(state.raw) + ")" : "") + "  " + fingers
+        + "  " + PApplet.nf(state.speed, 1, 1) + (state.swiping ? " SWIPE" : "");
       app.noStroke();
       app.fill(state.justChanged ? ink : COLOR_TEXT);
       app.textAlign(PApplet.LEFT, PApplet.TOP);
       app.text(label, camera.frameToScreenX(hand.x[0]) + 8, camera.frameToScreenY(hand.y[0]) + 4);
+    }
+    if (pairActive) {
+      float mx = camera.frameToScreenX(pairMidX);
+      float my = camera.frameToScreenY(pairMidY);
+      app.fill(COLOR_TEXT);
+      app.textAlign(PApplet.CENTER, PApplet.BOTTOM);
+      app.text("PAIR " + PApplet.nf(pairDistance, 1, 1) + "  " + (pairRate >= 0 ? "+" : "") + PApplet.nf(pairRate, 1, 1) + "/s", mx, my - 6);
     }
     app.popStyle();
   }
@@ -227,6 +329,14 @@ class HandGesture {
   float pinchX, pinchY;                    // 엄지 끝과 검지 끝의 중간
   float pointX, pointY;                    // 검지 끝
   float pinchStrength;                     // 0~1. 엄지와 검지가 가까울수록 1
+
+  // 손바닥 중심 속도 (프레임 px/초)와 빠르기 (초당 손바닥 크기 몇 개)
+  float velX, velY;
+  float speed;
+  boolean swiping;                         // SWIPE_START를 넘으면 true, SWIPE_END 밑으로 내려가면 false
+  boolean hasLast;
+  float lastPalmX, lastPalmY;
+  int lastMoveAt;
 
   // 판별에 쓴 측정값 (조정과 디버그용)
   boolean pinched;
