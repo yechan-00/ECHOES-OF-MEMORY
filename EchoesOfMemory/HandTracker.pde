@@ -10,7 +10,8 @@
 // 실행은 code/ 폴더의 ONNX Runtime Java jar가 한다. 외부 프로세스는 없다.
 //
 // 처리 순서 (새 카메라 프레임마다, 별도 스레드):
-//   1. 추적 중인 손마다 이전 관절 위치로 회전된 정사각형 영역(ROI)을 잡고 관절 모델만 돌린다.
+//   1. 추적 중인 손마다 이전 관절 위치를 최근 속도만큼 옮겨 회전된 정사각형 영역(ROI)을 잡고 관절 모델만 돌린다.
+//      예측이 빗나가면 원래 자리로 한 번 더 찾는다.
 //      신뢰도가 TRACK_SCORE보다 낮으면 그 손은 놓친 것으로 본다.
 //   2. 추적 중인 손이 MAX_HANDS보다 적으면 손바닥 검출 모델로 새 손을 찾는다.
 //      이미 추적 중인 손과 겹치는 손바닥은 건너뛴다.
@@ -48,6 +49,11 @@ class HandTracker {
   static final float ROI_ENLARGE = 3.0f;         // 손바닥 상자를 손 전체 영역으로 키우는 배율
   static final float SAME_HAND_RATIO = 0.5f;     // 두 손의 중심 거리가 손바닥 크기의 이 비율보다 작으면 같은 손
   static final int STALE_MS = 500;               // 결과가 이보다 오래되면 손이 없는 것으로 본다
+  // 빠르게 움직이는 손이 영역 밖으로 나가지 않도록, 최근 속도만큼 다음 영역을 미리 옮긴다
+  static final float PREDICT_GAIN = 1.0f;        // 예측 이동량에 곱하는 값. 0이면 예측하지 않는다
+  static final float PREDICT_MAX = 1.5f;         // 한 번에 옮기는 최대 거리 (× 손바닥 크기)
+  static final float PREDICT_SMOOTH = 0.6f;      // 새 속도를 섞는 비율
+  static final float PREDICT_RETRY = 0.25f;      // 이보다 많이 옮겼다가 놓치면 원래 자리로 한 번 더 찾는다 (× 손바닥 크기)
 
   // 반전 전 원본 영상에서 모델 원값이 0.5보다 크면 실제 오른손이었다
   // (MediaPipe 테스트 사진 right_hands.jpg, victory.jpg로 확인). 실제 카메라에서 반대로 나오면 true로 바꾼다.
@@ -256,12 +262,32 @@ class HandTracker {
       framesSinceDetect = 0;
     }
 
-    // 1. 추적 중인 손은 이전 관절 위치로 영역을 잡는다
+    // 1. 추적 중인 손은 이전 관절 위치를 최근 속도만큼 옮겨 영역을 잡는다
     ArrayList<HandTrack> kept = new ArrayList<HandTrack>();
     for (HandTrack track : tracks) {
-      HandRoi roi = roiFromLandmarks(track.rawX, track.rawY);
-      if (roi == null) continue;
-      LandmarkResult result = runLandmarks(pixels, w, h, roi);
+      float palm = track.palmSize();
+      float shiftX = track.velX * (nowMs - track.lastMs) * PREDICT_GAIN;
+      float shiftY = track.velY * (nowMs - track.lastMs) * PREDICT_GAIN;
+      float shift = (float) Math.sqrt(shiftX * shiftX + shiftY * shiftY);
+      float maxShift = palm * PREDICT_MAX;
+      if (shift > maxShift) {
+        shiftX *= maxShift / shift;
+        shiftY *= maxShift / shift;
+        shift = maxShift;
+      }
+      float[] px = new float[21];
+      float[] py = new float[21];
+      for (int k = 0; k < 21; k++) {
+        px[k] = track.rawX[k] + shiftX;
+        py[k] = track.rawY[k] + shiftY;
+      }
+      HandRoi roi = roiFromLandmarks(px, py);
+      LandmarkResult result = roi == null ? null : runLandmarks(pixels, w, h, roi);
+      if ((result == null || result.score < TRACK_SCORE) && shift > palm * PREDICT_RETRY) {
+        // 예측이 빗나갔으면 (방향을 갑자기 바꾼 경우) 원래 자리에서 한 번 더 찾는다
+        roi = roiFromLandmarks(track.rawX, track.rawY);
+        result = roi == null ? null : runLandmarks(pixels, w, h, roi);
+      }
       if (result == null || result.score < TRACK_SCORE) continue;
       track.accept(result, roi, nowMs);
       kept.add(track);
@@ -698,6 +724,8 @@ class HandTrack {
   float score;
   float handedness;
   HandRoi roi;
+  float velX, velY;               // 손바닥 중심 속도 (원본 프레임 px/ms). 다음 영역 예측에 쓴다
+  long lastMs;
 
   HandTrack(int id) {
     this.id = id;
@@ -709,9 +737,17 @@ class HandTrack {
 
   void accept(LandmarkResult result, HandRoi usedRoi, long nowMs) {
     if (startedMs == 0) startedMs = nowMs;
+    float oldX = palmCenterX();
+    float oldY = palmCenterY();
     System.arraycopy(result.x, 0, rawX, 0, 21);
     System.arraycopy(result.y, 0, rawY, 0, 21);
     System.arraycopy(result.z, 0, rawZ, 0, 21);
+    long dt = nowMs - lastMs;
+    if (lastMs != 0 && dt > 0) {
+      velX += ((palmCenterX() - oldX) / dt - velX) * HandTracker.PREDICT_SMOOTH;
+      velY += ((palmCenterY() - oldY) / dt - velY) * HandTracker.PREDICT_SMOOTH;
+    }
+    lastMs = nowMs;
     // 왼손/오른손 판정은 흔들리지 않게 천천히 섞는다
     handedness = score == 0 ? result.handedness : handedness * 0.8f + result.handedness * 0.2f;
     score = result.score;
